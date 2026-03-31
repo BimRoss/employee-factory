@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/bimross/employee-factory/internal/config"
 	"github.com/bimross/employee-factory/internal/router"
@@ -239,18 +240,28 @@ func (b *Bot) runMultiagentSession(ctx context.Context, channel, rawText string,
 			userPayload = router.WrapAlexUserMessage(userPayload)
 		}
 
+		log.Printf("multiagent: generating employee=%s slot=%d user_payload_runes=%d (includes prior squad context when slot>0)",
+			b.cfg.EmployeeID, k, utf8.RuneCountInString(userPayload))
 		b.postMultiagentReply(ctx, channel, userPayload)
 	}
 }
 
 func (b *Bot) waitUntilSlot(ctx context.Context, channelID, parentTS string, slots []string, slotIndex int, poll time.Duration) ([]slack.Message, error) {
 	k := slotIndex
+	start := time.Now()
+	attempts := 0
 	for {
+		attempts++
 		msgs, err := b.squadMessagesInChannelAfter(ctx, channelID, parentTS)
 		if err != nil {
 			return nil, err
 		}
+		// Slot k is this bot's turn after exactly k prior squad messages in order (0-indexed).
+		// We poll conversations.history until that prefix appears—so the previous bot has
+		// finished PostMessage and Slack returns the full message before we call the LLM.
 		if len(msgs) == k && prefixMatchesSquadSlots(msgs, slots, k) {
+			log.Printf("multiagent: slot ready employee=%s slot=%d wait=%v polls=%d prior_squad_msgs=%d",
+				b.cfg.EmployeeID, k, time.Since(start), attempts, len(msgs))
 			return msgs, nil
 		}
 		select {
