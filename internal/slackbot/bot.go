@@ -10,6 +10,7 @@ import (
 	"github.com/bimross/employee-factory/internal/config"
 	"github.com/bimross/employee-factory/internal/llm"
 	"github.com/bimross/employee-factory/internal/persona"
+	"github.com/bimross/employee-factory/internal/router"
 	"github.com/slack-go/slack"
 	"github.com/slack-go/slack/slackevents"
 	"github.com/slack-go/slack/socketmode"
@@ -31,7 +32,7 @@ Length (hard): Aim for about 5–8 short lines for a typical answer—roughly on
 
 No filler: Do not repeat the same idea in different words, do not add “In summary / Overall / It’s important to note,” and do not pad with generic industry boilerplate.`
 
-// Bot runs Slack Socket Mode and responds using Cogito + persona.
+// Bot runs Slack Socket Mode and responds using OpenAI-compatible chat + persona.
 type Bot struct {
 	cfg     *config.Config
 	api     *slack.Client
@@ -170,22 +171,29 @@ func (b *Bot) onAppMention(ctx context.Context, ev *slackevents.AppMentionEvent)
 	b.postLLMReply(ctx, channel, text, ev.ThreadTimeStamp, ev.TimeStamp, false)
 }
 
-func (b *Bot) postLLMReply(ctx context.Context, channel, userText, threadTS, parentMessageTS string, isIM bool) {
+func (b *Bot) postLLMReply(ctx context.Context, channel, userText, threadTS, messageTS string, isIM bool) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	system := b.persona.String()
-	if system == "" {
-		system = "You are a helpful assistant."
+	persona := b.persona.String()
+	if persona == "" {
+		persona = "You are a helpful assistant."
 	}
-	system += slackReplySuffix
 
-	reply, err := b.llm.Reply(ctx, system, userText)
+	userPayload := strings.TrimSpace(userText)
+	if b.useAlexHints() && b.cfg.LLMAlexHints {
+		userPayload = router.WrapAlexUserMessage(userPayload)
+	}
+	if tc := b.threadContextBlock(ctx, channel, threadTS, messageTS); tc != "" {
+		userPayload = tc + "\n\n" + userPayload
+	}
+
+	reply, err := b.llm.Reply(ctx, persona, slackReplySuffix, userPayload)
 	if err != nil {
 		log.Printf("llm reply error: %v", err)
 		opts := []slack.MsgOption{slack.MsgOptionText("Sorry, I hit an error generating a reply.", false)}
-		if parentMessageTS != "" {
-			opts = append(opts, slack.MsgOptionTS(parentMessageTS))
+		if ts := threadReplyTS(threadTS, messageTS, isIM); ts != "" {
+			opts = append(opts, slack.MsgOptionTS(ts))
 		}
 		_, _, _ = b.api.PostMessageContext(ctx, channel, opts...)
 		return
@@ -195,14 +203,68 @@ func (b *Bot) postLLMReply(ctx context.Context, channel, userText, threadTS, par
 	}
 
 	opts := []slack.MsgOption{slack.MsgOptionText(reply, false)}
-	if threadTS != "" {
-		opts = append(opts, slack.MsgOptionTS(threadTS))
-	} else if !isIM && parentMessageTS != "" {
-		opts = append(opts, slack.MsgOptionTS(parentMessageTS))
+	if ts := threadReplyTS(threadTS, messageTS, isIM); ts != "" {
+		opts = append(opts, slack.MsgOptionTS(ts))
 	}
 
 	_, _, err = b.api.PostMessageContext(ctx, channel, opts...)
 	if err != nil {
 		log.Printf("slack post message: %v", err)
 	}
+}
+
+func threadReplyTS(threadTS, messageTS string, isIM bool) string {
+	if threadTS != "" {
+		return threadTS
+	}
+	if !isIM && messageTS != "" {
+		return messageTS
+	}
+	return ""
+}
+
+func (b *Bot) useAlexHints() bool {
+	id := strings.ToLower(strings.TrimSpace(b.cfg.EmployeeID))
+	return id == "" || id == "alex"
+}
+
+// threadContextBlock fetches prior messages in a Slack thread (no extra LLM calls).
+func (b *Bot) threadContextBlock(ctx context.Context, channelID, threadTS, currentMsgTS string) string {
+	if threadTS == "" {
+		return ""
+	}
+	params := &slack.GetConversationRepliesParameters{
+		ChannelID: channelID,
+		Timestamp: threadTS,
+		Limit:     b.cfg.LLMThreadMaxMessages,
+	}
+	msgs, _, _, err := b.api.GetConversationRepliesContext(ctx, params)
+	if err != nil {
+		log.Printf("thread fetch: %v", err)
+		return ""
+	}
+	var lines []string
+	for _, m := range msgs {
+		if m.Timestamp == currentMsgTS {
+			continue
+		}
+		text := strings.TrimSpace(m.Text)
+		if text == "" {
+			continue
+		}
+		role := "user"
+		if m.BotID != "" || m.User == b.botUserID {
+			role = "assistant"
+		}
+		lines = append(lines, "["+role+"] "+text)
+	}
+	if len(lines) == 0 {
+		return ""
+	}
+	out := "Earlier in this Slack thread (oldest first):\n" + strings.Join(lines, "\n")
+	r := []rune(out)
+	if len(r) > b.cfg.LLMThreadMaxRunes {
+		out = "…[thread truncated; oldest lines dropped]\n" + string(r[len(r)-b.cfg.LLMThreadMaxRunes:])
+	}
+	return out
 }

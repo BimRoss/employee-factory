@@ -21,8 +21,18 @@ type Config struct {
 	LLMAPIKey  string
 	// LLMSystemMaxRunes caps the system (persona) prompt size. -1 disables truncation (e.g. large-context models).
 	LLMSystemMaxRunes int
-	// LLMMaxTokens is passed as max_tokens on chat completions (generation budget).
+	// LLMMaxTokens is passed as max_tokens on chat completions (generation budget ceiling).
 	LLMMaxTokens int
+	// LLMTemperature is sampling temperature for chat completions (default 0.55).
+	LLMTemperature float32
+	// LLMTopP is optional nucleus sampling; nil means omit (provider default).
+	LLMTopP *float32
+
+	// Slack thread history (conversations.replies) for multi-turn context.
+	LLMThreadMaxMessages int
+	LLMThreadMaxRunes    int
+	// LLMAlexHints enables deterministic keyword hints prepended to the user message (Alex only).
+	LLMAlexHints bool
 
 	SlackBotToken string
 	SlackAppToken string
@@ -58,8 +68,13 @@ func Load() (*Config, error) {
 		LLMModel:          llmModel,
 		LLMAPIKey:         strings.TrimSpace(firstNonEmpty(os.Getenv("LLM_API_KEY"), employeePrefixed(empID, "CHUTES_KEY"), os.Getenv("ALEX_CHUTES_KEY"))),
 		LLMSystemMaxRunes: parseIntEnvSigned("LLM_SYSTEM_MAX_RUNES", 48000),
-		// Slack: 512 tokens still allows essay-length output; default lower—override for long-form.
-		LLMMaxTokens:    parseIntEnvMin("LLM_MAX_TOKENS", 256, 1),
+		// Default ceiling avoids mid-sentence cutoffs; brevity comes from the Slack system suffix, not a tiny cap.
+		LLMMaxTokens:       parseIntEnvMin("LLM_MAX_TOKENS", 1024, 1),
+		LLMTemperature:     parseFloat32Env("LLM_TEMPERATURE", 0.55),
+		LLMTopP:              parseOptionalFloat32("LLM_TOP_P"),
+		LLMThreadMaxMessages: parseIntEnvMin("LLM_THREAD_MAX_MESSAGES", 25, 1),
+		LLMThreadMaxRunes:    parseIntEnvMin("LLM_THREAD_MAX_RUNES", 16000, 256),
+		LLMAlexHints:         parseBoolEnv("LLM_ALEX_HINTS", true),
 		SlackBotToken:   strings.TrimSpace(firstNonEmpty(os.Getenv("SLACK_BOT_TOKEN"), employeePrefixed(empID, "SLACK_BOT_TOKEN"), os.Getenv("ALEX_SLACK_BOT_TOKEN"))),
 		SlackAppToken:   strings.TrimSpace(firstNonEmpty(os.Getenv("SLACK_APP_TOKEN"), employeePrefixed(empID, "SLACK_APP_TOKEN"), os.Getenv("ALEX_SLACK_APP_TOKEN"))),
 		PersonaPath:     getEnv("PERSONA_PATH", "/config/persona.md"),
@@ -142,4 +157,44 @@ func parseIntEnvMin(key string, def, min int) int {
 		return def
 	}
 	return n
+}
+
+func parseFloat32Env(key string, def float32) float32 {
+	v := strings.TrimSpace(os.Getenv(key))
+	if v == "" {
+		return def
+	}
+	f, err := strconv.ParseFloat(v, 32)
+	if err != nil {
+		return def
+	}
+	return float32(f)
+}
+
+func parseOptionalFloat32(key string) *float32 {
+	v := strings.TrimSpace(os.Getenv(key))
+	if v == "" {
+		return nil
+	}
+	f, err := strconv.ParseFloat(v, 32)
+	if err != nil {
+		return nil
+	}
+	x := float32(f)
+	return &x
+}
+
+func parseBoolEnv(key string, def bool) bool {
+	v := strings.TrimSpace(strings.ToLower(os.Getenv(key)))
+	if v == "" {
+		return def
+	}
+	switch v {
+	case "1", "true", "yes", "on":
+		return true
+	case "0", "false", "no", "off":
+		return false
+	default:
+		return def
+	}
 }

@@ -12,11 +12,22 @@ Go + [Cogito](https://github.com/mudler/cogito) workers that act as **BimRoss �
 
 Health: `GET /health`, `GET /readyz` on `HTTP_ADDR` (default `:8080`).
 
-### Slack length and models
+### Slack length, thread context, and models
 
-- Default **`LLM_MAX_TOKENS`** is **256** (tight cap—raise via env only if you want longer replies).
-- The bot appends **Slack reply rules** to the system prompt (match persona voice/substance; **5–8 lines** default; no filler).
-- **1B** models are cheap but weak at following long system prompts and staying brief. For better adherence to `persona.md` and cleaner answers, move to an **~8B instruct-class** model on Chutes (check the live [LLM list](https://chutes.ai/app?type=llm) for IDs, pricing, and availability—pick an **Instruct** chat model, not base). Keep `LLM_MAX_TOKENS` low unless you explicitly want long outputs.
+- Default **`LLM_MAX_TOKENS`** is **1024** (ceiling so replies rarely cut off mid-sentence; brevity comes from the Slack system suffix, not a tiny cap). Lower only if you need hard cost limits.
+- **`LLM_TEMPERATURE`** (default `0.55`) and optional **`LLM_TOP_P`** tune sampling.
+- The bot appends **Slack reply rules** after `persona.md` via a fixed suffix. Persona text is truncated first if **`LLM_SYSTEM_MAX_RUNES`** is exceeded; the suffix is never dropped.
+- In **threads**, the bot loads recent messages with **`conversations.replies`** (up to **`LLM_THREAD_MAX_MESSAGES`**, trimmed to **`LLM_THREAD_MAX_RUNES`**) and prepends them to the user message—no extra LLM call.
+- For **Alex** (`EMPLOYEE_ID=alex` or empty), optional deterministic **keyword hints** (`LLM_ALEX_HINTS=true`) nudge the model toward the right framework; disable with `LLM_ALEX_HINTS=0` if you want zero hinting.
+- **1B** models are cheap but weak at long system prompts. For production, use a stronger **Instruct** model on Chutes ([LLM list](https://chutes.ai/app?type=llm)).
+
+### Persona privacy (production)
+
+- Render Slack personas from **tracked** `bimross/cursor-rules` rules only (CronJob + `render-employee-persona.py`). Do **not** bake in gitignored **`local-context.mdc`**, **`.cursor/rules/private/**`**, or **`.cursor/businesses/**`**—keep private overlays Cursor-only.
+
+### Manual QA
+
+- See [`docs/BASELINE_PROMPTS.md`](docs/BASELINE_PROMPTS.md) for quick before/after prompts when changing models or prompts.
 
 ## Kubernetes
 
