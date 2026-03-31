@@ -6,6 +6,7 @@ import (
 	"log"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/bimross/employee-factory/internal/config"
 	"github.com/bimross/employee-factory/internal/llm"
@@ -42,17 +43,21 @@ type Bot struct {
 
 	botUserID string
 	mu        sync.Mutex
+	outbound  *outboundGate
 }
 
 // New constructs a Socket Mode bot.
 func New(cfg *config.Config, lm *llm.EmployeeLLM, p *persona.Loader) *Bot {
 	api := slack.New(cfg.SlackBotToken, slack.OptionAppLevelToken(cfg.SlackAppToken))
+	window := time.Duration(cfg.SlackOutboundWindowSec) * time.Second
+	minGap := time.Duration(cfg.SlackOutboundMinGapSec) * time.Second
 	return &Bot{
 		cfg:     cfg,
 		api:     api,
 		sm:      socketmode.New(api),
 		llm:     lm,
 		persona: p,
+		outbound: newOutboundGate(window, cfg.SlackOutboundMaxPerWindow, minGap),
 	}
 }
 
@@ -175,6 +180,16 @@ func (b *Bot) postLLMReply(ctx context.Context, channel, userText, threadTS, mes
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
+	now := time.Now()
+	if b.outbound != nil && !b.outbound.allow(now) {
+		emp := strings.TrimSpace(b.cfg.EmployeeID)
+		if emp == "" {
+			emp = "default"
+		}
+		log.Printf("slack outbound rate limit: skipping reply (employee=%s channel=%s)", emp, channel)
+		return
+	}
+
 	persona := b.persona.String()
 	if persona == "" {
 		persona = "You are a helpful assistant."
@@ -195,7 +210,14 @@ func (b *Bot) postLLMReply(ctx context.Context, channel, userText, threadTS, mes
 		if ts := threadReplyTS(threadTS); ts != "" {
 			opts = append(opts, slack.MsgOptionTS(ts))
 		}
-		_, _, _ = b.api.PostMessageContext(ctx, channel, opts...)
+		_, _, err = b.api.PostMessageContext(ctx, channel, opts...)
+		if err != nil {
+			log.Printf("slack post message: %v", err)
+			return
+		}
+		if b.outbound != nil {
+			b.outbound.record(time.Now())
+		}
 		return
 	}
 	if reply == "" {
@@ -210,6 +232,10 @@ func (b *Bot) postLLMReply(ctx context.Context, channel, userText, threadTS, mes
 	_, _, err = b.api.PostMessageContext(ctx, channel, opts...)
 	if err != nil {
 		log.Printf("slack post message: %v", err)
+		return
+	}
+	if b.outbound != nil {
+		b.outbound.record(time.Now())
 	}
 }
 

@@ -34,6 +34,12 @@ type Config struct {
 	// LLMAlexHints enables deterministic keyword hints prepended to the user message (Alex only).
 	LLMAlexHints bool
 
+	// Slack outbound rate limit (per bot instance): max posts in a rolling window plus min gap
+	// between posts. Prevents runaway threads when agents @mention each other. 0 = disabled.
+	SlackOutboundWindowSec    int
+	SlackOutboundMaxPerWindow int
+	SlackOutboundMinGapSec    int
+
 	SlackBotToken string
 	SlackAppToken string
 
@@ -75,6 +81,9 @@ func Load() (*Config, error) {
 		LLMThreadMaxMessages: parseIntEnvMin("LLM_THREAD_MAX_MESSAGES", 25, 1),
 		LLMThreadMaxRunes:    parseIntEnvMin("LLM_THREAD_MAX_RUNES", 16000, 256),
 		LLMAlexHints:         parseBoolEnv("LLM_ALEX_HINTS", true),
+		SlackOutboundWindowSec:    parseIntEnvMin("SLACK_OUTBOUND_WINDOW_SEC", 60, 1),
+		SlackOutboundMaxPerWindow: parseIntEnvDefaultOrZero("SLACK_OUTBOUND_MAX_PER_WINDOW", 3),
+		SlackOutboundMinGapSec:    parseIntEnvMin("SLACK_OUTBOUND_MIN_GAP_SEC", 3, 0),
 		SlackBotToken:   strings.TrimSpace(firstNonEmpty(os.Getenv("SLACK_BOT_TOKEN"), employeePrefixed(empID, "SLACK_BOT_TOKEN"), os.Getenv("ALEX_SLACK_BOT_TOKEN"))),
 		SlackAppToken:   strings.TrimSpace(firstNonEmpty(os.Getenv("SLACK_APP_TOKEN"), employeePrefixed(empID, "SLACK_APP_TOKEN"), os.Getenv("ALEX_SLACK_APP_TOKEN"))),
 		PersonaPath:     getEnv("PERSONA_PATH", "/config/persona.md"),
@@ -182,6 +191,22 @@ func parseOptionalFloat32(key string) *float32 {
 	}
 	x := float32(f)
 	return &x
+}
+
+// parseIntEnvDefaultOrZero returns def when unset; 0 when set to "0" (disable); invalid uses def.
+func parseIntEnvDefaultOrZero(key string, def int) int {
+	v := strings.TrimSpace(os.Getenv(key))
+	if v == "" {
+		return def
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		return def
+	}
+	if n < 0 {
+		return def
+	}
+	return n
 }
 
 func parseBoolEnv(key string, def bool) bool {
