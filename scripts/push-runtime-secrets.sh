@@ -7,6 +7,7 @@ set -euo pipefail
 #
 # After sourcing .env, uses:
 #   LLM_API_KEY, SLACK_BOT_TOKEN, SLACK_APP_TOKEN
+#   Optional: LLM_MODEL or per-employee {ID}_MODEL (e.g. ALEX_MODEL) — written to the secret so it overrides ConfigMap.
 # or Alex-local fallbacks:
 #   ALEX_CHUTES_KEY, ALEX_SLACK_BOT_TOKEN, ALEX_SLACK_APP_TOKEN
 #
@@ -46,11 +47,27 @@ if [[ -z "${LLM_KEY}" || -z "${BOT}" || -z "${APP}" ]]; then
   exit 1
 fi
 
+kubectl create namespace "${NAMESPACE}" --dry-run=client -o yaml | kubectl apply -f -
+
+EMPLOYEE_ID="${EMPLOYEE_ID:-alex}"
+EMP_MODEL_VAR="$(echo "${EMPLOYEE_ID}" | tr '[:lower:]-' '[:upper:]_')_MODEL"
+MODEL_VAL="${LLM_MODEL:-}"
+if [[ -z "${MODEL_VAL}" ]]; then
+  MODEL_VAL="${!EMP_MODEL_VAR:-}"
+fi
+
+secret_args=(
+  --namespace "${NAMESPACE}"
+  --from-literal=LLM_API_KEY="${LLM_KEY}"
+  --from-literal=SLACK_BOT_TOKEN="${BOT}"
+  --from-literal=SLACK_APP_TOKEN="${APP}"
+)
+if [[ -n "${MODEL_VAL}" ]]; then
+  secret_args+=(--from-literal=LLM_MODEL="${MODEL_VAL}")
+fi
+
 kubectl create secret generic "${SECRET_NAME}" \
-  --namespace "${NAMESPACE}" \
-  --from-literal=LLM_API_KEY="${LLM_KEY}" \
-  --from-literal=SLACK_BOT_TOKEN="${BOT}" \
-  --from-literal=SLACK_APP_TOKEN="${APP}" \
+  "${secret_args[@]}" \
   --dry-run=client -o yaml | kubectl apply -f -
 
 echo "applied secret ${SECRET_NAME} in ${NAMESPACE}"

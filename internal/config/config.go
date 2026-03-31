@@ -27,17 +27,30 @@ type Config struct {
 }
 
 // Load reads environment variables. Canonical keys (LLM_*, SLACK_*) take precedence;
-// if unset and EMPLOYEE_ID is set, falls back to {EMPLOYEE_ID}_CHUTES_KEY style keys.
+// if unset and EMPLOYEE_ID is set, falls back to {EMPLOYEE_ID}_CHUTES_KEY / _MODEL style keys.
+// LLM model: LLM_MODEL, then {EMPLOYEE}_MODEL (e.g. ALEX_MODEL when id is alex), else ALEX_MODEL only if EMPLOYEE_ID is unset, else default Chutes model.
 func Load() (*Config, error) {
 	_ = os.Getenv("SKIP_DOTENV") // documented no-op if caller loads dotenv first
 
 	empID := strings.TrimSpace(os.Getenv("EMPLOYEE_ID"))
 
+	llmModel := strings.TrimSpace(firstNonEmpty(
+		os.Getenv("LLM_MODEL"),
+		employeePrefixed(empID, "MODEL"),
+	))
+	if llmModel == "" && empID == "" {
+		// Local convenience when EMPLOYEE_ID is unset: same as ALEX_* for keys.
+		llmModel = strings.TrimSpace(os.Getenv("ALEX_MODEL"))
+	}
+	if llmModel == "" {
+		llmModel = DefaultChutesModel
+	}
+
 	cfg := &Config{
 		EmployeeID:      empID,
 		HTTPAddr:        getEnv("HTTP_ADDR", ":8080"),
 		LLMBaseURL:      getEnv("LLM_BASE_URL", "https://llm.chutes.ai/v1"),
-		LLMModel:        getEnv("LLM_MODEL", DefaultChutesModel),
+		LLMModel:        llmModel,
 		LLMAPIKey:       strings.TrimSpace(firstNonEmpty(os.Getenv("LLM_API_KEY"), employeePrefixed(empID, "CHUTES_KEY"), os.Getenv("ALEX_CHUTES_KEY"))),
 		SlackBotToken:   strings.TrimSpace(firstNonEmpty(os.Getenv("SLACK_BOT_TOKEN"), employeePrefixed(empID, "SLACK_BOT_TOKEN"), os.Getenv("ALEX_SLACK_BOT_TOKEN"))),
 		SlackAppToken:   strings.TrimSpace(firstNonEmpty(os.Getenv("SLACK_APP_TOKEN"), employeePrefixed(empID, "SLACK_APP_TOKEN"), os.Getenv("ALEX_SLACK_APP_TOKEN"))),

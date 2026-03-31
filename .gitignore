@@ -3,5 +3,5 @@ persona.local.md
 /bin/
 /dist/
 *.exe
-employee-factory
+/employee-factory
 .DS_Store
