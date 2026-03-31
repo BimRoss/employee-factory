@@ -195,8 +195,8 @@ func formatPriorSquadTurns(slots []string, slotIndex int, squadMsgs []slack.Mess
 // runMultiagentSession coordinates sequential replies on the channel timeline (no thread_ts).
 // messageTS is the triggering message timestamp; squad coordination uses messages posted after it.
 // participants is the ordered squad subset (explicit @mentions) or full MULTIAGENT_ORDER (broadcast).
-func (b *Bot) runMultiagentSession(ctx context.Context, channel, rawText string, messageTS string, isIM bool, participants []string) {
-	if isIM || !b.cfg.MultiagentConfigured() {
+func (b *Bot) runMultiagentSession(ctx context.Context, channel, rawText string, messageTS string, participants []string) {
+	if !b.cfg.MultiagentConfigured() {
 		return
 	}
 	if len(participants) < 2 {

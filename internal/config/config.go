@@ -28,14 +28,14 @@ type Config struct {
 	// LLMTopP is optional nucleus sampling; nil means omit (provider default).
 	LLMTopP *float32
 
-	// Slack thread history (conversations.replies) for multi-turn context.
+	// Recent channel history (conversations.history) for linear context; env keys LLM_THREAD_*.
 	LLMThreadMaxMessages int
 	LLMThreadMaxRunes    int
 	// LLMAlexHints enables deterministic keyword hints prepended to the user message (Alex only).
 	LLMAlexHints bool
 
 	// Slack outbound rate limit (per bot instance): max posts in a rolling window.
-	// Prevents runaway threads when agents @mention each other. 0 = disabled.
+	// Prevents runaway reply loops when agents @mention each other. 0 = disabled.
 	SlackOutboundWindowSec    int
 	SlackOutboundMaxPerWindow int
 

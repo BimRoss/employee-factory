@@ -31,9 +31,9 @@ Company name: **BimRoss** (capital B, capital R). Never write BenRoss, Ben Ross,
 
 Substance: When the persona defines frameworks, facts, or priorities, treat that text as authoritative. Prefer those definitions and labels over broad defaults from general knowledge.
 
-Succinctness and tokens: Every word costs latency and money. Be **dense and complete**, not padded. Answer the **direct question first**, then add only what helps the thread or channel. Aim for **about 4–7 short lines** for a normal reply—roughly one Slack screen on mobile. Expand only when the user clearly asks for depth, a script, or step-by-step detail. **Do not** trail off mid-thought: finish sentences; if you are tight on space, shorten scope, not grammar.
+Succinctness and tokens: Every word costs latency and money. Be **dense and complete**, not padded. Answer the **direct question first**, then add only what helps the channel. Aim for **about 4–7 short lines** for a normal reply—roughly one Slack screen on mobile. Expand only when the user clearly asks for depth, a script, or step-by-step detail. **Do not** trail off mid-thought: finish sentences; if you are tight on space, shorten scope, not grammar.
 
-Channel: You are in a **shared channel**—make the reply useful to others skimming the thread, not only a private lecture.
+Channel: You are in a **shared channel**—make the reply useful to others skimming the timeline, not only a private lecture.
 
 No filler: Do not repeat the same idea in different words, do not add “In summary / Overall / It’s important to note,” and do not pad with generic industry boilerplate.`
 
@@ -146,30 +146,30 @@ func (b *Bot) onMessage(ctx context.Context, ev *slackevents.MessageEvent) {
 		return
 	}
 
-	// IMs: channel id often starts with "D"; App Home / some clients also set channel_type.
-	isIM := strings.HasPrefix(channel, "D") || ev.ChannelType == "im" || ev.ChannelType == "mpim"
-	if !isIM {
-		mention := fmt.Sprintf("<@%s>", b.botUserID)
-		if strings.Contains(rawText, mention) {
-			if b.dispatchMultiagentChannel(ctx, channel, rawText, ev.ThreadTimeStamp, ev.TimeStamp) {
-				return
-			}
-			text := strings.TrimSpace(strings.ReplaceAll(strings.ReplaceAll(rawText, mention, ""), "  ", " "))
-			if text == "" {
-				return
-			}
-			b.postLLMReply(ctx, channel, text, ev.ThreadTimeStamp, ev.TimeStamp, isIM)
-			return
-		}
-		// message.channels fires for @everyone / @channel even when no app is @mentioned; only the
-		// first squad bot coordinates so we do not triple-start sessions (Tim/Alex/Ross all subscribe).
-		if b.dispatchBroadcastMultiagent(ctx, channel, rawText, ev.ThreadTimeStamp, ev.TimeStamp) {
-			return
-		}
+	// BimRoss policy: one open channel (#chat-style), no DMs, no threads—ignore IMs and thread replies.
+	if strings.HasPrefix(channel, "D") || ev.ChannelType == "im" || ev.ChannelType == "mpim" {
+		return
+	}
+	if strings.TrimSpace(ev.ThreadTimeStamp) != "" {
 		return
 	}
 
-	b.postLLMReply(ctx, channel, rawText, ev.ThreadTimeStamp, ev.TimeStamp, isIM)
+	mention := fmt.Sprintf("<@%s>", b.botUserID)
+	if strings.Contains(rawText, mention) {
+		if b.dispatchMultiagentChannel(ctx, channel, rawText, ev.TimeStamp) {
+			return
+		}
+		text := strings.TrimSpace(strings.ReplaceAll(strings.ReplaceAll(rawText, mention, ""), "  ", " "))
+		if text == "" {
+			return
+		}
+		b.postLLMReply(ctx, channel, text, ev.TimeStamp)
+		return
+	}
+	// message.channels: @everyone / @channel without bot @mentions; first in MULTIAGENT_ORDER coordinates.
+	if b.dispatchBroadcastMultiagent(ctx, channel, rawText, ev.TimeStamp) {
+		return
+	}
 }
 
 func (b *Bot) onAppMention(ctx context.Context, ev *slackevents.AppMentionEvent) {
@@ -184,7 +184,10 @@ func (b *Bot) onAppMention(ctx context.Context, ev *slackevents.AppMentionEvent)
 	if channel == "" {
 		return
 	}
-	if b.dispatchMultiagentChannel(ctx, channel, rawText, ev.ThreadTimeStamp, ev.TimeStamp) {
+	if strings.HasPrefix(channel, "D") || strings.TrimSpace(ev.ThreadTimeStamp) != "" {
+		return
+	}
+	if b.dispatchMultiagentChannel(ctx, channel, rawText, ev.TimeStamp) {
 		return
 	}
 	mention := fmt.Sprintf("<@%s>", b.botUserID)
@@ -192,12 +195,12 @@ func (b *Bot) onAppMention(ctx context.Context, ev *slackevents.AppMentionEvent)
 	if text == "" {
 		return
 	}
-	b.postLLMReply(ctx, channel, text, ev.ThreadTimeStamp, ev.TimeStamp, false)
+	b.postLLMReply(ctx, channel, text, ev.TimeStamp)
 }
 
 // dispatchMultiagentChannel starts a sequential multi-bot session when squad env is configured
 // and two or more squad bots are mentioned. Single-bot behavior stays in the caller.
-func (b *Bot) dispatchMultiagentChannel(ctx context.Context, channel, rawText string, threadTS, messageTS string) bool {
+func (b *Bot) dispatchMultiagentChannel(ctx context.Context, channel, rawText string, messageTS string) bool {
 	if !b.cfg.MultiagentConfigured() {
 		return false
 	}
@@ -205,13 +208,13 @@ func (b *Bot) dispatchMultiagentChannel(ctx context.Context, channel, rawText st
 	if len(participants) < 2 {
 		return false
 	}
-	go b.runMultiagentSession(ctx, channel, rawText, messageTS, false, participants)
+	go b.runMultiagentSession(ctx, channel, rawText, messageTS, participants)
 	return true
 }
 
 // dispatchBroadcastMultiagent handles @everyone / @channel (Slack <!everyone> / <!channel>) when no bot
 // is @mentioned: only MULTIAGENT_ORDER[0] runs so three apps’ message.channels handlers do not duplicate work.
-func (b *Bot) dispatchBroadcastMultiagent(ctx context.Context, channel, rawText string, threadTS, messageTS string) bool {
+func (b *Bot) dispatchBroadcastMultiagent(ctx context.Context, channel, rawText string, messageTS string) bool {
 	if !b.cfg.MultiagentConfigured() || !b.isBroadcastMultiagentCoordinator() {
 		return false
 	}
@@ -222,11 +225,11 @@ func (b *Bot) dispatchBroadcastMultiagent(ctx context.Context, channel, rawText 
 	if len(participants) < 2 {
 		return false
 	}
-	go b.runMultiagentSession(ctx, channel, rawText, messageTS, false, participants)
+	go b.runMultiagentSession(ctx, channel, rawText, messageTS, participants)
 	return true
 }
 
-func (b *Bot) postLLMReply(ctx context.Context, channel, userText, threadTS, messageTS string, isIM bool) {
+func (b *Bot) postLLMReply(ctx context.Context, channel, userText, messageTS string) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
@@ -249,7 +252,7 @@ func (b *Bot) postLLMReply(ctx context.Context, channel, userText, threadTS, mes
 	if b.useAlexHints() && b.cfg.LLMAlexHints {
 		userPayload = router.WrapAlexUserMessage(userPayload)
 	}
-	if tc := b.slackContextBlock(ctx, channel, threadTS, messageTS, isIM); tc != "" {
+	if tc := b.channelHistoryContextBlock(ctx, channel, messageTS); tc != "" {
 		userPayload = tc + "\n\n" + userPayload
 	}
 
@@ -257,9 +260,6 @@ func (b *Bot) postLLMReply(ctx context.Context, channel, userText, threadTS, mes
 	if err != nil {
 		log.Printf("llm reply error: %v", err)
 		opts := []slack.MsgOption{slack.MsgOptionText("Sorry, I hit an error generating a reply.", false)}
-		if ts := threadReplyTS(threadTS); ts != "" {
-			opts = append(opts, slack.MsgOptionTS(ts))
-		}
 		_, _, err = b.api.PostMessageContext(ctx, channel, opts...)
 		if err != nil {
 			log.Printf("slack post message: %v", err)
@@ -275,10 +275,6 @@ func (b *Bot) postLLMReply(ctx context.Context, channel, userText, threadTS, mes
 	}
 
 	opts := []slack.MsgOption{slack.MsgOptionText(reply, false)}
-	if ts := threadReplyTS(threadTS); ts != "" {
-		opts = append(opts, slack.MsgOptionTS(ts))
-	}
-
 	_, _, err = b.api.PostMessageContext(ctx, channel, opts...)
 	if err != nil {
 		log.Printf("slack post message: %v", err)
@@ -289,78 +285,17 @@ func (b *Bot) postLLMReply(ctx context.Context, channel, userText, threadTS, mes
 	}
 }
 
-// threadReplyTS chooses Slack's thread_ts for PostMessage. We only thread when the user
-// is already in a thread (threadTS set). For top-level channel @mentions we omit thread_ts
-// so the bot replies on the main channel timeline—matching “chat with Alex in #sales”
-// without collapsing everything into a thread under the first ping.
-func threadReplyTS(threadTS string) string {
-	return threadTS
-}
-
 func (b *Bot) useAlexHints() bool {
 	id := strings.ToLower(strings.TrimSpace(b.cfg.EmployeeID))
 	return id == "" || id == "alex"
 }
 
-// slackContextBlock adds prior turns: thread replies when thread_ts is set, otherwise
-// recent DM/MPIM history (Slack does not set thread_ts on linear IM chat, so threads alone
-// miss most 1:1 context).
-func (b *Bot) slackContextBlock(ctx context.Context, channelID, threadTS, currentMsgTS string, isIM bool) string {
-	if tc := b.threadContextBlock(ctx, channelID, threadTS, currentMsgTS); tc != "" {
-		return tc
-	}
-	if isIM && strings.TrimSpace(currentMsgTS) != "" {
-		if im := b.imHistoryContextBlock(ctx, channelID, currentMsgTS); im != "" {
-			return im
-		}
-	}
-	return ""
-}
-
-// threadContextBlock fetches prior messages in a Slack thread (no extra LLM calls).
-func (b *Bot) threadContextBlock(ctx context.Context, channelID, threadTS, currentMsgTS string) string {
-	if threadTS == "" {
+// channelHistoryContextBlock loads recent messages on the channel timeline before the current
+// message (conversations.history). No threads/DMs—one open channel, linear context.
+func (b *Bot) channelHistoryContextBlock(ctx context.Context, channelID, currentMsgTS string) string {
+	if strings.TrimSpace(currentMsgTS) == "" {
 		return ""
 	}
-	params := &slack.GetConversationRepliesParameters{
-		ChannelID: channelID,
-		Timestamp: threadTS,
-		Limit:     b.cfg.LLMThreadMaxMessages,
-	}
-	msgs, _, _, err := b.api.GetConversationRepliesContext(ctx, params)
-	if err != nil {
-		log.Printf("thread fetch: %v", err)
-		return ""
-	}
-	var lines []string
-	for _, m := range msgs {
-		if m.Timestamp == currentMsgTS {
-			continue
-		}
-		text := strings.TrimSpace(m.Text)
-		if text == "" {
-			continue
-		}
-		role := "user"
-		if m.BotID != "" || m.User == b.botUserID {
-			role = "assistant"
-		}
-		lines = append(lines, "["+role+"] "+text)
-	}
-	if len(lines) == 0 {
-		return ""
-	}
-	out := "Earlier in this Slack thread (oldest first):\n" + strings.Join(lines, "\n")
-	r := []rune(out)
-	if len(r) > b.cfg.LLMThreadMaxRunes {
-		out = "…[thread truncated; oldest lines dropped]\n" + string(r[len(r)-b.cfg.LLMThreadMaxRunes:])
-	}
-	return out
-}
-
-// imHistoryContextBlock loads messages in this DM/MPIM before the current message via
-// conversations.history (requires im:history / mpim:history as applicable).
-func (b *Bot) imHistoryContextBlock(ctx context.Context, channelID, currentMsgTS string) string {
 	params := &slack.GetConversationHistoryParameters{
 		ChannelID: channelID,
 		Latest:    currentMsgTS,
@@ -369,13 +304,12 @@ func (b *Bot) imHistoryContextBlock(ctx context.Context, channelID, currentMsgTS
 	}
 	resp, err := b.api.GetConversationHistoryContext(ctx, params)
 	if err != nil {
-		log.Printf("im history fetch: %v", err)
+		log.Printf("channel history fetch: %v", err)
 		return ""
 	}
 	if len(resp.Messages) == 0 {
 		return ""
 	}
-	// API returns newest-first; present oldest-first to match threadContextBlock.
 	msgs := append([]slack.Message(nil), resp.Messages...)
 	for i, j := 0, len(msgs)-1; i < j; i, j = i+1, j-1 {
 		msgs[i], msgs[j] = msgs[j], msgs[i]
@@ -401,10 +335,10 @@ func (b *Bot) imHistoryContextBlock(ctx context.Context, channelID, currentMsgTS
 	if len(lines) == 0 {
 		return ""
 	}
-	out := "Earlier in this Slack conversation (oldest first):\n" + strings.Join(lines, "\n")
+	out := "Earlier in this channel (oldest first):\n" + strings.Join(lines, "\n")
 	r := []rune(out)
 	if len(r) > b.cfg.LLMThreadMaxRunes {
-		out = "…[conversation truncated; oldest lines dropped]\n" + string(r[len(r)-b.cfg.LLMThreadMaxRunes:])
+		out = "…[truncated; oldest lines dropped]\n" + string(r[len(r)-b.cfg.LLMThreadMaxRunes:])
 	}
 	return out
 }
