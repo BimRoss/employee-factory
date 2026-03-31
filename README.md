@@ -24,7 +24,18 @@ Workflow `.github/workflows/employee-factory-images.yml` builds and pushes:
 - `geeemoney/employee-factory`
 - `geeemoney/employee-factory-persona-sync`
 
-On `v*` tags, **`gitops-release`** bumps image tags in `bimross/rancher-admin` (requires `RANCHER_ADMIN_REPO_TOKEN` and Docker Hub secrets).
+**GitHub Actions → Secrets** (repository):
+
+| Secret | Purpose |
+|--------|---------|
+| `DOCKERHUB_USERNAME` / `DOCKERHUB_TOKEN` | Push images on `v*` tags |
+| `RANCHER_ADMIN_REPO_TOKEN` | **`gitops-release` only**: clone + push to `bimross/rancher-admin` to bump image tags under `admin/apps/employee-factory/`. Same pattern as subnet-signal / twitter-worker. **Do not** use `github.token` for that checkout. |
+
+On **`v*`** tags, job **`gitops-release`** runs after both images build, strips the leading `v` for the semver tag (e.g. `v0.0.2` → `0.0.2`), updates `alex-deployment.yaml` and `persona-sync-cronjob.yaml`, commits, and pushes to **`master`** on rancher-admin. Fleet then deploys the new tags.
+
+The **running employee-factory pod** does not talk to the rancher-admin Git repo; only **CI** does. Persona sync uses **`CURSOR_RULES_GITHUB_TOKEN`** (see Kubernetes section) for `cursor-rules`, which is separate.
+
+If you tagged a release **before** this workflow (or `RANCHER_ADMIN_REPO_TOKEN`) existed, **`gitops-release`** may have been skipped or failed—fix secrets, merge workflow to default branch, then **re-run the failed workflow** or tag **`v0.0.3`** (or bump manifests in rancher-admin manually once).
 
 ## Environment resolution
 
