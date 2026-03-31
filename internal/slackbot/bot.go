@@ -76,13 +76,19 @@ func (b *Bot) handleEvent(ctx context.Context, evt socketmode.Event) {
 		if !ok {
 			return
 		}
-		b.sm.Ack(*evt.Request)
+		if evt.Request != nil {
+			b.sm.Ack(*evt.Request)
+		}
 
 		switch eventsAPI.Type {
 		case slackevents.CallbackEvent:
 			switch ev := eventsAPI.InnerEvent.Data.(type) {
 			case *slackevents.MessageEvent:
 				b.onMessage(ctx, ev)
+			case *slackevents.AppMentionEvent:
+				b.onAppMention(ctx, ev)
+			default:
+				log.Printf("slack: unhandled Events API inner type %T", eventsAPI.InnerEvent.Data)
 			}
 		case slackevents.URLVerification:
 			// Ack above satisfies Socket Mode; no extra work.
@@ -103,17 +109,20 @@ func (b *Bot) onMessage(ctx context.Context, ev *slackevents.MessageEvent) {
 		return
 	}
 
+	channel := strings.TrimSpace(ev.Channel)
+	if channel == "" && ev.Message != nil {
+		channel = strings.TrimSpace(ev.Message.Channel)
+	}
 	text := strings.TrimSpace(ev.Text)
-	if text == "" {
+	if text == "" && ev.Message != nil {
+		text = strings.TrimSpace(ev.Message.Text)
+	}
+	if channel == "" || text == "" {
 		return
 	}
 
-	channel := ev.Channel
-	if channel == "" {
-		return
-	}
-
-	isIM := strings.HasPrefix(channel, "D")
+	// IMs: channel id often starts with "D"; App Home / some clients also set channel_type.
+	isIM := strings.HasPrefix(channel, "D") || ev.ChannelType == "im" || ev.ChannelType == "mpim"
 	if !isIM {
 		mention := fmt.Sprintf("<@%s>", b.botUserID)
 		if !strings.Contains(text, mention) {
@@ -122,6 +131,30 @@ func (b *Bot) onMessage(ctx context.Context, ev *slackevents.MessageEvent) {
 		text = strings.TrimSpace(strings.ReplaceAll(strings.ReplaceAll(text, mention, ""), "  ", " "))
 	}
 
+	b.postLLMReply(ctx, channel, text, ev.ThreadTimeStamp, ev.TimeStamp, isIM)
+}
+
+func (b *Bot) onAppMention(ctx context.Context, ev *slackevents.AppMentionEvent) {
+	if ev == nil || ev.User == b.botUserID {
+		return
+	}
+	text := strings.TrimSpace(ev.Text)
+	if text == "" {
+		return
+	}
+	mention := fmt.Sprintf("<@%s>", b.botUserID)
+	text = strings.TrimSpace(strings.ReplaceAll(strings.ReplaceAll(text, mention, ""), "  ", " "))
+	if text == "" {
+		return
+	}
+	channel := strings.TrimSpace(ev.Channel)
+	if channel == "" {
+		return
+	}
+	b.postLLMReply(ctx, channel, text, ev.ThreadTimeStamp, ev.TimeStamp, false)
+}
+
+func (b *Bot) postLLMReply(ctx context.Context, channel, userText, threadTS, parentMessageTS string, isIM bool) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
@@ -130,10 +163,14 @@ func (b *Bot) onMessage(ctx context.Context, ev *slackevents.MessageEvent) {
 		system = "You are a helpful assistant."
 	}
 
-	reply, err := b.llm.Reply(ctx, system, text)
+	reply, err := b.llm.Reply(ctx, system, userText)
 	if err != nil {
 		log.Printf("llm reply error: %v", err)
-		_, _, _ = b.api.PostMessageContext(ctx, channel, slack.MsgOptionText("Sorry, I hit an error generating a reply.", false), slack.MsgOptionTS(ev.TimeStamp))
+		opts := []slack.MsgOption{slack.MsgOptionText("Sorry, I hit an error generating a reply.", false)}
+		if parentMessageTS != "" {
+			opts = append(opts, slack.MsgOptionTS(parentMessageTS))
+		}
+		_, _, _ = b.api.PostMessageContext(ctx, channel, opts...)
 		return
 	}
 	if reply == "" {
@@ -141,11 +178,10 @@ func (b *Bot) onMessage(ctx context.Context, ev *slackevents.MessageEvent) {
 	}
 
 	opts := []slack.MsgOption{slack.MsgOptionText(reply, false)}
-	threadTS := ev.ThreadTimeStamp
 	if threadTS != "" {
 		opts = append(opts, slack.MsgOptionTS(threadTS))
-	} else if !isIM {
-		opts = append(opts, slack.MsgOptionTS(ev.TimeStamp))
+	} else if !isIM && parentMessageTS != "" {
+		opts = append(opts, slack.MsgOptionTS(parentMessageTS))
 	}
 
 	_, _, err = b.api.PostMessageContext(ctx, channel, opts...)
