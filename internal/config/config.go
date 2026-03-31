@@ -6,6 +6,9 @@ import (
 	"strings"
 )
 
+// DefaultChutesModel is used when LLM_MODEL is unset and matches the default Chutes base URL.
+const DefaultChutesModel = "unsloth/Llama-3.2-1B-Instruct"
+
 // Config holds runtime settings for one employee instance.
 type Config struct {
 	EmployeeID string
@@ -34,7 +37,7 @@ func Load() (*Config, error) {
 		EmployeeID:      empID,
 		HTTPAddr:        getEnv("HTTP_ADDR", ":8080"),
 		LLMBaseURL:      getEnv("LLM_BASE_URL", "https://llm.chutes.ai/v1"),
-		LLMModel:        strings.TrimSpace(os.Getenv("LLM_MODEL")),
+		LLMModel:        getEnv("LLM_MODEL", DefaultChutesModel),
 		LLMAPIKey:       strings.TrimSpace(firstNonEmpty(os.Getenv("LLM_API_KEY"), employeePrefixed(empID, "CHUTES_KEY"), os.Getenv("ALEX_CHUTES_KEY"))),
 		SlackBotToken:   strings.TrimSpace(firstNonEmpty(os.Getenv("SLACK_BOT_TOKEN"), employeePrefixed(empID, "SLACK_BOT_TOKEN"), os.Getenv("ALEX_SLACK_BOT_TOKEN"))),
 		SlackAppToken:   strings.TrimSpace(firstNonEmpty(os.Getenv("SLACK_APP_TOKEN"), employeePrefixed(empID, "SLACK_APP_TOKEN"), os.Getenv("ALEX_SLACK_APP_TOKEN"))),
@@ -42,9 +45,6 @@ func Load() (*Config, error) {
 		PersonaReloadMS: parseIntEnv("PERSONA_RELOAD_MS", 60000),
 	}
 
-	if cfg.LLMModel == "" {
-		return nil, fmt.Errorf("LLM_MODEL is required")
-	}
 	if cfg.LLMAPIKey == "" {
 		return nil, fmt.Errorf("set LLM_API_KEY, or %s_CHUTES_KEY, or ALEX_CHUTES_KEY for local Alex", strings.ToUpper(empID))
 	}
