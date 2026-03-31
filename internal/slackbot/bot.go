@@ -184,7 +184,7 @@ func (b *Bot) postLLMReply(ctx context.Context, channel, userText, threadTS, mes
 	if b.useAlexHints() && b.cfg.LLMAlexHints {
 		userPayload = router.WrapAlexUserMessage(userPayload)
 	}
-	if tc := b.threadContextBlock(ctx, channel, threadTS, messageTS); tc != "" {
+	if tc := b.slackContextBlock(ctx, channel, threadTS, messageTS, isIM); tc != "" {
 		userPayload = tc + "\n\n" + userPayload
 	}
 
@@ -228,6 +228,21 @@ func (b *Bot) useAlexHints() bool {
 	return id == "" || id == "alex"
 }
 
+// slackContextBlock adds prior turns: thread replies when thread_ts is set, otherwise
+// recent DM/MPIM history (Slack does not set thread_ts on linear IM chat, so threads alone
+// miss most 1:1 context).
+func (b *Bot) slackContextBlock(ctx context.Context, channelID, threadTS, currentMsgTS string, isIM bool) string {
+	if tc := b.threadContextBlock(ctx, channelID, threadTS, currentMsgTS); tc != "" {
+		return tc
+	}
+	if isIM && strings.TrimSpace(currentMsgTS) != "" {
+		if im := b.imHistoryContextBlock(ctx, channelID, currentMsgTS); im != "" {
+			return im
+		}
+	}
+	return ""
+}
+
 // threadContextBlock fetches prior messages in a Slack thread (no extra LLM calls).
 func (b *Bot) threadContextBlock(ctx context.Context, channelID, threadTS, currentMsgTS string) string {
 	if threadTS == "" {
@@ -265,6 +280,57 @@ func (b *Bot) threadContextBlock(ctx context.Context, channelID, threadTS, curre
 	r := []rune(out)
 	if len(r) > b.cfg.LLMThreadMaxRunes {
 		out = "…[thread truncated; oldest lines dropped]\n" + string(r[len(r)-b.cfg.LLMThreadMaxRunes:])
+	}
+	return out
+}
+
+// imHistoryContextBlock loads messages in this DM/MPIM before the current message via
+// conversations.history (requires im:history / mpim:history as applicable).
+func (b *Bot) imHistoryContextBlock(ctx context.Context, channelID, currentMsgTS string) string {
+	params := &slack.GetConversationHistoryParameters{
+		ChannelID: channelID,
+		Latest:    currentMsgTS,
+		Inclusive: false,
+		Limit:     b.cfg.LLMThreadMaxMessages,
+	}
+	resp, err := b.api.GetConversationHistoryContext(ctx, params)
+	if err != nil {
+		log.Printf("im history fetch: %v", err)
+		return ""
+	}
+	if len(resp.Messages) == 0 {
+		return ""
+	}
+	// API returns newest-first; present oldest-first to match threadContextBlock.
+	msgs := append([]slack.Message(nil), resp.Messages...)
+	for i, j := 0, len(msgs)-1; i < j; i, j = i+1, j-1 {
+		msgs[i], msgs[j] = msgs[j], msgs[i]
+	}
+	var lines []string
+	for _, m := range msgs {
+		if m.Timestamp == currentMsgTS {
+			continue
+		}
+		text := strings.TrimSpace(m.Text)
+		if text == "" {
+			continue
+		}
+		if m.SubType == "message_changed" || m.SubType == "message_deleted" {
+			continue
+		}
+		role := "user"
+		if m.BotID != "" || m.User == b.botUserID {
+			role = "assistant"
+		}
+		lines = append(lines, "["+role+"] "+text)
+	}
+	if len(lines) == 0 {
+		return ""
+	}
+	out := "Earlier in this Slack conversation (oldest first):\n" + strings.Join(lines, "\n")
+	r := []rune(out)
+	if len(r) > b.cfg.LLMThreadMaxRunes {
+		out = "…[conversation truncated; oldest lines dropped]\n" + string(r[len(r)-b.cfg.LLMThreadMaxRunes:])
 	}
 	return out
 }
