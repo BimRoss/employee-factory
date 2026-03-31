@@ -48,7 +48,7 @@ type Config struct {
 	// Multiagent: shared Slack user IDs + order for sequential multi-bot channel sessions (see slackbot).
 	// When unset, multi-agent mode is off and behavior matches single-bot replies.
 	MultiagentEnabled        bool
-	MultiagentBotUserIDs     map[string]string // employee key -> Slack user ID, e.g. ross -> U123
+	MultiagentBotUserIDs     map[string]string // employee key -> Slack user ID (from MULTIAGENT_BOT_USER_IDS or ROSS_SLACK_BOT_ID / TIM_SLACK_BOT_ID / …)
 	MultiagentOrder          []string          // employee keys, e.g. ross, tim, alex
 	MultiagentPollInterval   int               // milliseconds between Slack polls while waiting
 	MultiagentWaitTimeoutSec int               // max wait for a predecessor to post
@@ -128,29 +128,8 @@ func parseMultiagentEnv(cfg *Config) error {
 		cfg.MultiagentEnabled = false
 		return nil
 	}
-	if raw == "" || orderRaw == "" {
-		return fmt.Errorf("multi-agent: set both MULTIAGENT_BOT_USER_IDS and MULTIAGENT_ORDER, or omit both")
-	}
-
-	m := make(map[string]string)
-	for _, part := range strings.Split(raw, ",") {
-		part = strings.TrimSpace(part)
-		if part == "" {
-			continue
-		}
-		kv := strings.SplitN(part, ":", 2)
-		if len(kv) != 2 {
-			return fmt.Errorf("multi-agent: invalid MULTIAGENT_BOT_USER_IDS entry %q (want ross:U123,...)", part)
-		}
-		key := strings.ToLower(strings.TrimSpace(kv[0]))
-		uid := strings.TrimSpace(kv[1])
-		if key == "" || uid == "" {
-			return fmt.Errorf("multi-agent: empty key or user id in %q", part)
-		}
-		m[key] = uid
-	}
-	if len(m) == 0 {
-		return fmt.Errorf("multi-agent: MULTIAGENT_BOT_USER_IDS parsed empty")
+	if orderRaw == "" {
+		return fmt.Errorf("multi-agent: set MULTIAGENT_ORDER plus MULTIAGENT_BOT_USER_IDS or each ROSS_SLACK_BOT_ID / TIM_SLACK_BOT_ID / …, or omit multi-agent env vars")
 	}
 
 	var order []string
@@ -159,13 +138,48 @@ func parseMultiagentEnv(cfg *Config) error {
 		if part == "" {
 			continue
 		}
-		if _, ok := m[part]; !ok {
-			return fmt.Errorf("multi-agent: MULTIAGENT_ORDER key %q missing from MULTIAGENT_BOT_USER_IDS", part)
-		}
 		order = append(order, part)
 	}
 	if len(order) == 0 {
 		return fmt.Errorf("multi-agent: MULTIAGENT_ORDER empty")
+	}
+
+	m := make(map[string]string)
+	if raw != "" {
+		for _, part := range strings.Split(raw, ",") {
+			part = strings.TrimSpace(part)
+			if part == "" {
+				continue
+			}
+			kv := strings.SplitN(part, ":", 2)
+			if len(kv) != 2 {
+				return fmt.Errorf("multi-agent: invalid MULTIAGENT_BOT_USER_IDS entry %q (want ross:U123,...)", part)
+			}
+			key := strings.ToLower(strings.TrimSpace(kv[0]))
+			uid := strings.TrimSpace(kv[1])
+			if key == "" || uid == "" {
+				return fmt.Errorf("multi-agent: empty key or user id in %q", part)
+			}
+			m[key] = uid
+		}
+		if len(m) == 0 {
+			return fmt.Errorf("multi-agent: MULTIAGENT_BOT_USER_IDS parsed empty")
+		}
+	} else {
+		for _, key := range order {
+			uid := strings.TrimSpace(employeePrefixed(key, "SLACK_BOT_ID"))
+			if uid == "" {
+				envName := strings.ToUpper(strings.ReplaceAll(key, "-", "_")) + "_SLACK_BOT_ID"
+				return fmt.Errorf("multi-agent: set %s for employee %q (or set MULTIAGENT_BOT_USER_IDS)", envName, key)
+			}
+			m[key] = uid
+		}
+	}
+
+	for _, part := range order {
+		if _, ok := m[part]; !ok {
+			return fmt.Errorf("multi-agent: MULTIAGENT_ORDER key %q missing from squad user id map", part)
+		}
 	}
 	for k := range m {
 		found := false
@@ -176,7 +190,7 @@ func parseMultiagentEnv(cfg *Config) error {
 			}
 		}
 		if !found {
-			return fmt.Errorf("multi-agent: employee %q in MULTIAGENT_BOT_USER_IDS but not in MULTIAGENT_ORDER", k)
+			return fmt.Errorf("multi-agent: employee %q in map but not in MULTIAGENT_ORDER", k)
 		}
 	}
 
