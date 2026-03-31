@@ -1,6 +1,6 @@
 # employee-factory
 
-Go + [Cogito](https://github.com/mudler/cogito) workers that act as **BimRoss “employees”**: Slack (Socket Mode), pluggable OpenAI-compatible LLMs (e.g. **Chutes**), and personas rendered from [`cursor-rules`](../cursor-rules) (`personas/<id>.manifest` + `scripts/render-employee-persona.py`).
+Go + [Cogito](https://github.com/mudler/cogito) workers that act as **BimRoss “employees”**: Slack (Socket Mode), pluggable OpenAI-compatible LLMs (e.g. **Chutes**), and personas rendered from [`cursor-rules`](../cursor-rules) by `scripts/render-employee-persona.py`, which concatenates **`.cursor/rules/{employee}-*.mdc`** (e.g. all `alex-*.mdc` when `EMPLOYEE=alex`). See [`cursor-rules/personas/README.md`](../cursor-rules/personas/README.md).
 
 ## Local run
 
