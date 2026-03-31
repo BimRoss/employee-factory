@@ -94,6 +94,7 @@ jobs:
           paths = [
               Path("rancher-admin/admin/apps/employee-factory/alex-deployment.yaml"),
               Path("rancher-admin/admin/apps/employee-factory/tim-deployment.yaml"),
+              Path("rancher-admin/admin/apps/employee-factory/ross-deployment.yaml"),
           ]
           pattern = r"(geeemoney/employee-factory:)[^\s\"']+"
           for path in paths:
@@ -113,6 +114,6 @@ jobs:
           fi
           git config user.name "employee-factory-ci"
           git config user.email "employee-factory-ci@users.noreply.github.com"
-          git add admin/apps/employee-factory/alex-deployment.yaml admin/apps/employee-factory/tim-deployment.yaml
+          git add admin/apps/employee-factory/alex-deployment.yaml admin/apps/employee-factory/tim-deployment.yaml admin/apps/employee-factory/ross-deployment.yaml
           git commit -m "release(employee-factory): bump image to ${VERSION}"
           git push origin master
