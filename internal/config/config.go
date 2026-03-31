@@ -100,6 +100,15 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 
+	// Optional per-employee sampling temperature (e.g. ROSS_LLM_TEMPERATURE) to diversify squad replies.
+	if empID != "" {
+		if v := strings.TrimSpace(employeePrefixed(empID, "LLM_TEMPERATURE")); v != "" {
+			if f, err := strconv.ParseFloat(v, 32); err == nil {
+				cfg.LLMTemperature = float32(f)
+			}
+		}
+	}
+
 	if cfg.LLMAPIKey == "" {
 		return nil, fmt.Errorf("set LLM_API_KEY, or %s_CHUTES_KEY, or ALEX_CHUTES_KEY for local Alex", strings.ToUpper(empID))
 	}

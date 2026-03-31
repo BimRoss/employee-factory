@@ -340,7 +340,7 @@ func (b *Bot) postMultiagentReply(ctx context.Context, channel, userPayload stri
 		reply = "…"
 	}
 
-	reply = formatOutgoingSlackMessage(reply)
+	reply = formatOutgoingSlackMessage(reply, b.cfg)
 	opts := []slack.MsgOption{slack.MsgOptionText(reply, false)}
 	_, _, err = b.api.PostMessageContext(ctx, channel, opts...)
 	if err != nil {

@@ -35,6 +35,10 @@ Succinctness and tokens: Every word costs latency and money. Default: two to fou
 
 Channel: You are in a shared channel—make the reply scannable in seconds.
 
+Cross-talk: Name another teammate (@ross, @tim, @alex) only when you are adding a disagreement, a constraint, a concrete handoff, or a correction—not to pile on generic agreement or “X is right” praise chains.
+
+Multi-agent turns: If another bot already answered above you in this thread, do not restate their recommendation in the same words. Add a distinct angle: risk, tradeoff, metric, or the next concrete step they did not cover.
+
 No filler: Do not repeat the same idea in different words or pad with “In summary / Overall.” Finish sentences; if tight on space, cut scope, not grammar.`
 
 // Bot runs Slack Socket Mode and responds using OpenAI-compatible chat + persona.
@@ -276,7 +280,7 @@ func (b *Bot) postLLMReply(ctx context.Context, channel, userText, messageTS str
 		reply = "…"
 	}
 
-	reply = formatOutgoingSlackMessage(reply)
+	reply = formatOutgoingSlackMessage(reply, b.cfg)
 	opts := []slack.MsgOption{slack.MsgOptionText(reply, false)}
 	_, _, err = b.api.PostMessageContext(ctx, channel, opts...)
 	if err != nil {
