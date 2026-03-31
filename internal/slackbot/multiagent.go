@@ -15,11 +15,7 @@ import (
 	"github.com/slack-go/slack"
 )
 
-var (
-	reSlackUserMention = regexp.MustCompile(`<@(U[A-Za-z0-9]+)>`)
-	// Natural-language "everyone" as a whole word (RE2 has no \b; approximate).
-	reEveryoneWord = regexp.MustCompile(`(?i)(^|[^a-zA-Z0-9_])everyone([^a-zA-Z0-9_]|$)`)
-)
+var reSlackUserMention = regexp.MustCompile(`<@(U[A-Za-z0-9]+)>`)
 
 // mentionedSquadKeys returns squad employee keys mentioned in raw Slack text, in MULTIAGENT_ORDER.
 func mentionedSquadKeys(rawText string, cfg *config.Config) []string {
@@ -62,13 +58,15 @@ func parseMentionedUserIDs(text string) []string {
 	return out
 }
 
-// everyoneTriggerTwoRounds is true when the message should run two full squad rounds.
-func everyoneTriggerTwoRounds(rawText string) bool {
+// multiagentRounds returns how many full squad passes to run. Slack @everyone inserts
+// <!everyone> and requests two rounds; @channel inserts <!channel> and stays at one round
+// (same as a plain multi-mention without special groups).
+func multiagentRounds(rawText string) int {
 	lower := strings.ToLower(rawText)
-	if strings.Contains(lower, "<!everyone>") || strings.Contains(lower, "<!channel>") {
-		return true
+	if strings.Contains(lower, "<!everyone>") {
+		return 2
 	}
-	return reEveryoneWord.MatchString(rawText)
+	return 1
 }
 
 // buildSlots repeats ordered participant keys for each round; returns Slack user IDs per slot.
@@ -178,10 +176,7 @@ func (b *Bot) runMultiagentSession(ctx context.Context, channel, rawText string,
 	if len(participants) < 2 {
 		return
 	}
-	rounds := 1
-	if everyoneTriggerTwoRounds(rawText) {
-		rounds = 2
-	}
+	rounds := multiagentRounds(rawText)
 	slots := buildSlots(participants, rounds, b.cfg.MultiagentBotUserIDs)
 	if len(slots) == 0 {
 		return

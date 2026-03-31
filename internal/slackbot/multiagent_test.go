@@ -63,18 +63,18 @@ func TestBuildSlots_rounds(t *testing.T) {
 	}
 }
 
-func TestEveryoneTriggerTwoRounds(t *testing.T) {
-	if !everyoneTriggerTwoRounds("Hey everyone — thoughts?") {
-		t.Fatal("expected natural language everyone")
+func TestMultiagentRounds(t *testing.T) {
+	if multiagentRounds("Hey everyone — thoughts?") != 1 {
+		t.Fatal("natural-language everyone must not add a second round")
 	}
-	if !everyoneTriggerTwoRounds("Ping <!channel> please") {
-		t.Fatal("expected channel token")
+	if multiagentRounds("Ping <!channel> please") != 1 {
+		t.Fatal("@channel is one round")
 	}
-	if !everyoneTriggerTwoRounds("Use <!everyone> for this") {
-		t.Fatal("expected everyone token")
+	if multiagentRounds("Use <!everyone> for this") != 2 {
+		t.Fatal("@everyone is two rounds")
 	}
-	if everyoneTriggerTwoRounds("everything is fine") {
-		t.Fatal("should not match everything")
+	if multiagentRounds("everything is fine") != 1 {
+		t.Fatal("everything is fine should be one round")
 	}
 }
 
