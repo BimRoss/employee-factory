@@ -5,7 +5,9 @@ Go + [Cogito](https://github.com/mudler/cogito) workers that act as **BimRoss â€
 ## Local run
 
 1. Copy `.env.example` to `.env` and set `ALEX_CHUTES_KEY` and Slack tokens. Model: `LLM_MODEL` (canonical), or `ALEX_MODEL` / `{EMPLOYEE_ID}_MODEL` for per-employee brains; if all unset, defaults to `unsloth/Llama-3.2-1B-Instruct` on Chutes.
-2. Create a local persona file (e.g. `persona.local.md`) and set `PERSONA_PATH`.
+2. Build a local persona from `cursor-rules` (compact Slack-oriented render):  
+   `python3 ../cursor-rules/scripts/render-employee-persona.py --repo-root ../cursor-rules --employee alex --compact -o persona.local.md`  
+   Then set `PERSONA_PATH` (e.g. `persona.local.md`).
 3. `go run ./cmd/employee-factory`
 
 Health: `GET /health`, `GET /readyz` on `HTTP_ADDR` (default `:8080`).

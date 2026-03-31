@@ -22,10 +22,19 @@ rm -rf "${WORKDIR}"
 CLONE_URL="${REPO/https:\/\//https:\/\/x-access-token:${GITHUB_TOKEN}@}"
 git clone --depth 1 "${CLONE_URL}" "${WORKDIR}"
 
-python3 "${WORKDIR}/scripts/render-employee-persona.py" \
-  --repo-root "${WORKDIR}" \
-  --employee "${EMPLOYEE}" \
+RENDER_ARGS=(
+  python3 "${WORKDIR}/scripts/render-employee-persona.py"
+  --repo-root "${WORKDIR}"
+  --employee "${EMPLOYEE}"
+  --compact
+  --stats
   -o "${OUT}"
+)
+EXCLUDE_LIST="${WORKDIR}/personas/${EMPLOYEE}-slack.exclude"
+if [[ -f "${EXCLUDE_LIST}" ]]; then
+  RENDER_ARGS+=(--exclude-file "${EXCLUDE_LIST}")
+fi
+"${RENDER_ARGS[@]}"
 
 SHA="$(git -C "${WORKDIR}" rev-parse HEAD)"
 kubectl -n "${NAMESPACE}" create configmap "${CM_NAME}" \
