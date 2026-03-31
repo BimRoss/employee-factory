@@ -55,11 +55,11 @@ func New(cfg *config.Config, lm *llm.EmployeeLLM, p *persona.Loader) *Bot {
 	api := slack.New(cfg.SlackBotToken, slack.OptionAppLevelToken(cfg.SlackAppToken))
 	window := time.Duration(cfg.SlackOutboundWindowSec) * time.Second
 	return &Bot{
-		cfg:     cfg,
-		api:     api,
-		sm:      socketmode.New(api),
-		llm:     lm,
-		persona: p,
+		cfg:      cfg,
+		api:      api,
+		sm:       socketmode.New(api),
+		llm:      lm,
+		persona:  p,
 		outbound: newOutboundGate(window, cfg.SlackOutboundMaxPerWindow),
 	}
 }
