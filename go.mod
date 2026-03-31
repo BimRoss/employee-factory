@@ -5,6 +5,7 @@ go 1.24.1
 require (
 	github.com/joho/godotenv v1.5.1
 	github.com/mudler/cogito v0.9.1
+	github.com/sashabaranov/go-openai v1.41.2
 	github.com/slack-go/slack v0.17.3
 )
 
@@ -21,7 +22,6 @@ require (
 	github.com/mitchellh/reflectwalk v1.0.2 // indirect
 	github.com/modelcontextprotocol/go-sdk v1.0.0 // indirect
 	github.com/mudler/xlog v0.0.1 // indirect
-	github.com/sashabaranov/go-openai v1.41.2 // indirect
 	github.com/shopspring/decimal v1.4.0 // indirect
 	github.com/spf13/cast v1.7.0 // indirect
 	github.com/tmc/langchaingo v0.1.13 // indirect

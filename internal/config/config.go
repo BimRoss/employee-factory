@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 )
 
@@ -18,6 +19,10 @@ type Config struct {
 	LLMBaseURL string
 	LLMModel   string
 	LLMAPIKey  string
+	// LLMSystemMaxRunes caps the system (persona) prompt size. -1 disables truncation (e.g. large-context models).
+	LLMSystemMaxRunes int
+	// LLMMaxTokens is passed as max_tokens on chat completions (generation budget).
+	LLMMaxTokens int
 
 	SlackBotToken string
 	SlackAppToken string
@@ -47,15 +52,17 @@ func Load() (*Config, error) {
 	}
 
 	cfg := &Config{
-		EmployeeID:      empID,
-		HTTPAddr:        getEnv("HTTP_ADDR", ":8080"),
-		LLMBaseURL:      getEnv("LLM_BASE_URL", "https://llm.chutes.ai/v1"),
-		LLMModel:        llmModel,
-		LLMAPIKey:       strings.TrimSpace(firstNonEmpty(os.Getenv("LLM_API_KEY"), employeePrefixed(empID, "CHUTES_KEY"), os.Getenv("ALEX_CHUTES_KEY"))),
-		SlackBotToken:   strings.TrimSpace(firstNonEmpty(os.Getenv("SLACK_BOT_TOKEN"), employeePrefixed(empID, "SLACK_BOT_TOKEN"), os.Getenv("ALEX_SLACK_BOT_TOKEN"))),
-		SlackAppToken:   strings.TrimSpace(firstNonEmpty(os.Getenv("SLACK_APP_TOKEN"), employeePrefixed(empID, "SLACK_APP_TOKEN"), os.Getenv("ALEX_SLACK_APP_TOKEN"))),
-		PersonaPath:     getEnv("PERSONA_PATH", "/config/persona.md"),
-		PersonaReloadMS: parseIntEnv("PERSONA_RELOAD_MS", 60000),
+		EmployeeID:        empID,
+		HTTPAddr:          getEnv("HTTP_ADDR", ":8080"),
+		LLMBaseURL:        getEnv("LLM_BASE_URL", "https://llm.chutes.ai/v1"),
+		LLMModel:          llmModel,
+		LLMAPIKey:         strings.TrimSpace(firstNonEmpty(os.Getenv("LLM_API_KEY"), employeePrefixed(empID, "CHUTES_KEY"), os.Getenv("ALEX_CHUTES_KEY"))),
+		LLMSystemMaxRunes: parseIntEnvSigned("LLM_SYSTEM_MAX_RUNES", 48000),
+		LLMMaxTokens:      parseIntEnvMin("LLM_MAX_TOKENS", 2048, 1),
+		SlackBotToken:     strings.TrimSpace(firstNonEmpty(os.Getenv("SLACK_BOT_TOKEN"), employeePrefixed(empID, "SLACK_BOT_TOKEN"), os.Getenv("ALEX_SLACK_BOT_TOKEN"))),
+		SlackAppToken:     strings.TrimSpace(firstNonEmpty(os.Getenv("SLACK_APP_TOKEN"), employeePrefixed(empID, "SLACK_APP_TOKEN"), os.Getenv("ALEX_SLACK_APP_TOKEN"))),
+		PersonaPath:       getEnv("PERSONA_PATH", "/config/persona.md"),
+		PersonaReloadMS:   parseIntEnv("PERSONA_RELOAD_MS", 60000),
 	}
 
 	if cfg.LLMAPIKey == "" {
@@ -104,6 +111,33 @@ func parseIntEnv(key string, def int) int {
 	var n int
 	_, err := fmt.Sscanf(v, "%d", &n)
 	if err != nil || n <= 0 {
+		return def
+	}
+	return n
+}
+
+// parseIntEnvSigned parses an int env; empty uses def. Invalid values use def.
+// Negative values are allowed (e.g. -1 means disable truncation for LLM_SYSTEM_MAX_RUNES).
+func parseIntEnvSigned(key string, def int) int {
+	v := strings.TrimSpace(os.Getenv(key))
+	if v == "" {
+		return def
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		return def
+	}
+	return n
+}
+
+// parseIntEnvMin parses a positive int; empty uses def; values below min use def.
+func parseIntEnvMin(key string, def, min int) int {
+	v := strings.TrimSpace(os.Getenv(key))
+	if v == "" {
+		return def
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n < min {
 		return def
 	}
 	return n
