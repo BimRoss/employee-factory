@@ -64,17 +64,29 @@ func TestBuildSlots_rounds(t *testing.T) {
 }
 
 func TestMultiagentRounds(t *testing.T) {
-	if multiagentRounds("Hey everyone — thoughts?") != 1 {
-		t.Fatal("natural-language everyone must not add a second round")
+	if multiagentRounds("Hey everyone — thoughts?") != 2 {
+		t.Fatal("whole-word everyone → two rounds when squad is active")
 	}
 	if multiagentRounds("Ping <!channel> please") != 1 {
 		t.Fatal("@channel is one round")
 	}
-	if multiagentRounds("Use <!everyone> for this") != 2 {
-		t.Fatal("@everyone is two rounds")
+	if multiagentRounds("Use <!everyone|@everyone> for this") != 2 {
+		t.Fatal("@everyone is two rounds (Slack may add label after |)")
 	}
 	if multiagentRounds("everything is fine") != 1 {
 		t.Fatal("everything is fine should be one round")
+	}
+}
+
+func TestBroadcastMultiagentTrigger(t *testing.T) {
+	if !broadcastMultiagentTrigger("<!everyone> hi") {
+		t.Fatal("everyone token")
+	}
+	if !broadcastMultiagentTrigger("x <!channel|@channel> y") {
+		t.Fatal("channel token")
+	}
+	if broadcastMultiagentTrigger("Hey everyone") {
+		t.Fatal("plain everyone text does not start broadcast (only coordinator + Slack tokens)")
 	}
 }
 

@@ -15,7 +15,11 @@ import (
 	"github.com/slack-go/slack"
 )
 
-var reSlackUserMention = regexp.MustCompile(`<@(U[A-Za-z0-9]+)>`)
+var (
+	reSlackUserMention = regexp.MustCompile(`<@(U[A-Za-z0-9]+)>`)
+	// Whole-word "everyone" for two-round mode when multiple squad bots are @mentioned (not used for no-mention broadcasts).
+	reEveryoneWord = regexp.MustCompile(`(?i)(^|[^a-zA-Z0-9_])everyone([^a-zA-Z0-9_]|$)`)
+)
 
 // mentionedSquadKeys returns squad employee keys mentioned in raw Slack text, in MULTIAGENT_ORDER.
 func mentionedSquadKeys(rawText string, cfg *config.Config) []string {
@@ -58,15 +62,36 @@ func parseMentionedUserIDs(text string) []string {
 	return out
 }
 
-// multiagentRounds returns how many full squad passes to run. Slack @everyone inserts
-// <!everyone> and requests two rounds; @channel inserts <!channel> and stays at one round
-// (same as a plain multi-mention without special groups).
+// multiagentRounds returns how many full squad passes to run. Two rounds when Slack’s
+// @everyone (<!everyone…>) is present, or the word "everyone" as a whole word (flexible for clients).
+// @channel (<!channel…>) and plain multi-mention stay at one round.
 func multiagentRounds(rawText string) int {
 	lower := strings.ToLower(rawText)
-	if strings.Contains(lower, "<!everyone>") {
+	if strings.Contains(lower, "<!everyone") {
+		return 2
+	}
+	if reEveryoneWord.MatchString(rawText) {
 		return 2
 	}
 	return 1
+}
+
+// broadcastMultiagentTrigger is true for Slack’s channel-wide tokens. Used when no bot is
+// @mentioned — only the first bot in MULTIAGENT_ORDER handles these (see dispatchBroadcastMultiagent).
+func broadcastMultiagentTrigger(rawText string) bool {
+	lower := strings.ToLower(rawText)
+	return strings.Contains(lower, "<!everyone") || strings.Contains(lower, "<!channel")
+}
+
+// isBroadcastMultiagentCoordinator is true only for the first employee in MULTIAGENT_ORDER so
+// message.channels does not start three duplicate sessions (Tim/Alex/Ross each subscribe).
+func (b *Bot) isBroadcastMultiagentCoordinator() bool {
+	if !b.cfg.MultiagentConfigured() || len(b.cfg.MultiagentOrder) == 0 {
+		return false
+	}
+	first := b.cfg.MultiagentOrder[0]
+	uid := b.cfg.MultiagentBotUserIDs[first]
+	return uid != "" && uid == b.botUserID
 }
 
 // buildSlots repeats ordered participant keys for each round; returns Slack user IDs per slot.
@@ -168,11 +193,11 @@ func formatPriorSquadTurns(slots []string, slotIndex int, squadMsgs []slack.Mess
 }
 
 // runMultiagentSession coordinates sequential in-thread replies. threadRootTS is the Slack thread parent ts.
-func (b *Bot) runMultiagentSession(ctx context.Context, channel, rawText string, threadTS, messageTS string, isIM bool) {
+// participants is the ordered squad subset (explicit @mentions) or full MULTIAGENT_ORDER (broadcast).
+func (b *Bot) runMultiagentSession(ctx context.Context, channel, rawText string, threadTS, messageTS string, isIM bool, participants []string) {
 	if isIM || !b.cfg.MultiagentConfigured() {
 		return
 	}
-	participants := mentionedSquadKeys(rawText, b.cfg)
 	if len(participants) < 2 {
 		return
 	}

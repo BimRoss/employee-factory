@@ -150,17 +150,22 @@ func (b *Bot) onMessage(ctx context.Context, ev *slackevents.MessageEvent) {
 	isIM := strings.HasPrefix(channel, "D") || ev.ChannelType == "im" || ev.ChannelType == "mpim"
 	if !isIM {
 		mention := fmt.Sprintf("<@%s>", b.botUserID)
-		if !strings.Contains(rawText, mention) {
+		if strings.Contains(rawText, mention) {
+			if b.dispatchMultiagentChannel(ctx, channel, rawText, ev.ThreadTimeStamp, ev.TimeStamp) {
+				return
+			}
+			text := strings.TrimSpace(strings.ReplaceAll(strings.ReplaceAll(rawText, mention, ""), "  ", " "))
+			if text == "" {
+				return
+			}
+			b.postLLMReply(ctx, channel, text, ev.ThreadTimeStamp, ev.TimeStamp, isIM)
 			return
 		}
-		if b.dispatchMultiagentChannel(ctx, channel, rawText, ev.ThreadTimeStamp, ev.TimeStamp) {
+		// message.channels fires for @everyone / @channel even when no app is @mentioned; only the
+		// first squad bot coordinates so we do not triple-start sessions (Tim/Alex/Ross all subscribe).
+		if b.dispatchBroadcastMultiagent(ctx, channel, rawText, ev.ThreadTimeStamp, ev.TimeStamp) {
 			return
 		}
-		text := strings.TrimSpace(strings.ReplaceAll(strings.ReplaceAll(rawText, mention, ""), "  ", " "))
-		if text == "" {
-			return
-		}
-		b.postLLMReply(ctx, channel, text, ev.ThreadTimeStamp, ev.TimeStamp, isIM)
 		return
 	}
 
@@ -196,10 +201,28 @@ func (b *Bot) dispatchMultiagentChannel(ctx context.Context, channel, rawText st
 	if !b.cfg.MultiagentConfigured() {
 		return false
 	}
-	if len(mentionedSquadKeys(rawText, b.cfg)) < 2 {
+	participants := mentionedSquadKeys(rawText, b.cfg)
+	if len(participants) < 2 {
 		return false
 	}
-	go b.runMultiagentSession(ctx, channel, rawText, threadTS, messageTS, false)
+	go b.runMultiagentSession(ctx, channel, rawText, threadTS, messageTS, false, participants)
+	return true
+}
+
+// dispatchBroadcastMultiagent handles @everyone / @channel (Slack <!everyone> / <!channel>) when no bot
+// is @mentioned: only MULTIAGENT_ORDER[0] runs so three apps’ message.channels handlers do not duplicate work.
+func (b *Bot) dispatchBroadcastMultiagent(ctx context.Context, channel, rawText string, threadTS, messageTS string) bool {
+	if !b.cfg.MultiagentConfigured() || !b.isBroadcastMultiagentCoordinator() {
+		return false
+	}
+	if !broadcastMultiagentTrigger(rawText) {
+		return false
+	}
+	participants := append([]string(nil), b.cfg.MultiagentOrder...)
+	if len(participants) < 2 {
+		return false
+	}
+	go b.runMultiagentSession(ctx, channel, rawText, threadTS, messageTS, false, participants)
 	return true
 }
 
