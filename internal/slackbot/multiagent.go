@@ -77,21 +77,10 @@ func multiagentRounds(rawText string) int {
 }
 
 // broadcastMultiagentTrigger is true for Slack’s channel-wide tokens. Used when no bot is
-// @mentioned — only the first bot in MULTIAGENT_ORDER handles these (see dispatchBroadcastMultiagent).
+// @mentioned — each squad bot starts runMultiagentSession; each posts only its own slots.
 func broadcastMultiagentTrigger(rawText string) bool {
 	lower := strings.ToLower(rawText)
 	return strings.Contains(lower, "<!everyone") || strings.Contains(lower, "<!channel")
-}
-
-// isBroadcastMultiagentCoordinator is true only for the first employee in MULTIAGENT_ORDER so
-// message.channels does not start three duplicate sessions (Tim/Alex/Ross each subscribe).
-func (b *Bot) isBroadcastMultiagentCoordinator() bool {
-	if !b.cfg.MultiagentConfigured() || len(b.cfg.MultiagentOrder) == 0 {
-		return false
-	}
-	first := b.cfg.MultiagentOrder[0]
-	uid := b.cfg.MultiagentBotUserIDs[first]
-	return uid != "" && uid == b.botUserID
 }
 
 // buildSlots repeats ordered participant keys for each round; returns Slack user IDs per slot.
@@ -212,6 +201,8 @@ func (b *Bot) runMultiagentSession(ctx context.Context, channel, rawText string,
 	if anchorTS == "" {
 		return
 	}
+
+	log.Printf("multiagent: session start employee=%s slots=%d rounds=%d anchor=%s", b.cfg.EmployeeID, len(slots), rounds, anchorTS)
 
 	squadSet := squadUserIDSet(b.cfg)
 	idToKey := make(map[string]string)

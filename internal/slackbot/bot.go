@@ -23,19 +23,19 @@ const slackReplySuffix = `
 
 Slack reply rules (always follow)
 
-Plain text only in the message body: this Slack app posts plain text, not mrkdwn. Do not use Markdown—no asterisk bold, no # headings, no backticks, no link syntax. Those show up as ugly raw punctuation. You may use numbered lines (1. 2. 3.) or bullet lines starting with - or • for structure.
+Plain text only in the message body: this Slack app posts plain text, not mrkdwn. Do not use Markdown—no asterisk bold, no # headings, no backticks, no link syntax. Those show up as ugly raw punctuation. Avoid long numbered lists and multi-level outlines unless the user explicitly asks for a list.
 
 Voice: Match the tone, diction, and reasoning style of the system persona above—this is who you are in Slack. Not a generic assistant.
 
 Company name: **BimRoss** (capital B, capital R). Never write BenRoss, Ben Ross, BIMRAS, or Bimross.
 
-Substance: When the persona defines frameworks, facts, or priorities, treat that text as authoritative. Prefer those definitions and labels over broad defaults from general knowledge.
+Substance: When the persona defines frameworks, facts, or priorities, treat that text as authoritative—but do **not** dump every framework as a sectioned essay. Apply judgment: one sharp take beats a catalog.
 
-Succinctness and tokens: Every word costs latency and money. Be **dense and complete**, not padded. Answer the **direct question first**, then add only what helps the channel. Aim for **about 4–7 short lines** for a normal reply—roughly one Slack screen on mobile. Expand only when the user clearly asks for depth, a script, or step-by-step detail. **Do not** trail off mid-thought: finish sentences; if you are tight on space, shorten scope, not grammar.
+Succinctness and tokens: Every word costs latency and money. Default: **2–4 short lines** total (about half a mobile screen). Lead with the answer. If the question is prioritization (“what next,” “what should we work on,” “best move”), give **one** concrete pick in the **first line**—optionally **one** short supporting line. Do not produce five themed sections, pillar lists, or “1–5” breakdowns unless the user explicitly asks for that format. Expand only when they ask for depth, steps, or a deliberate list.
 
-Channel: You are in a **shared channel**—make the reply useful to others skimming the timeline, not only a private lecture.
+Channel: You are in a **shared channel**—make the reply scannable in seconds.
 
-No filler: Do not repeat the same idea in different words, do not add “In summary / Overall / It’s important to note,” and do not pad with generic industry boilerplate.`
+No filler: Do not repeat the same idea in different words or pad with “In summary / Overall.” Finish sentences; if tight on space, cut scope, not grammar.`
 
 // Bot runs Slack Socket Mode and responds using OpenAI-compatible chat + persona.
 type Bot struct {
@@ -213,9 +213,11 @@ func (b *Bot) dispatchMultiagentChannel(ctx context.Context, channel, rawText st
 }
 
 // dispatchBroadcastMultiagent handles @everyone / @channel (Slack <!everyone> / <!channel>) when no bot
-// is @mentioned: only MULTIAGENT_ORDER[0] runs so three apps’ message.channels handlers do not duplicate work.
+// is @mentioned. Each squad bot receives message.channels and runs the same session: each process only
+// posts when the turn is that bot’s Slack user id (see runMultiagentSession)—so all three must run the
+// session, not just MULTIAGENT_ORDER[0].
 func (b *Bot) dispatchBroadcastMultiagent(ctx context.Context, channel, rawText string, messageTS string) bool {
-	if !b.cfg.MultiagentConfigured() || !b.isBroadcastMultiagentCoordinator() {
+	if !b.cfg.MultiagentConfigured() {
 		return false
 	}
 	if !broadcastMultiagentTrigger(rawText) {

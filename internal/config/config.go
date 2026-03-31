@@ -82,7 +82,7 @@ func Load() (*Config, error) {
 		LLMAPIKey:         strings.TrimSpace(firstNonEmpty(os.Getenv("LLM_API_KEY"), employeePrefixed(empID, "CHUTES_KEY"), os.Getenv("ALEX_CHUTES_KEY"))),
 		LLMSystemMaxRunes: parseIntEnvSigned("LLM_SYSTEM_MAX_RUNES", 48000),
 		// Default ceiling avoids mid-sentence cutoffs; brevity comes from the Slack system suffix, not a tiny cap.
-		LLMMaxTokens:              parseIntEnvMin("LLM_MAX_TOKENS", 1024, 1),
+		LLMMaxTokens:              parseIntEnvMin("LLM_MAX_TOKENS", 512, 1),
 		LLMTemperature:            parseFloat32Env("LLM_TEMPERATURE", 0.55),
 		LLMTopP:                   parseOptionalFloat32("LLM_TOP_P"),
 		LLMThreadMaxMessages:      parseIntEnvMin("LLM_THREAD_MAX_MESSAGES", 25, 1),
