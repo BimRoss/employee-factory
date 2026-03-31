@@ -15,6 +15,16 @@ import (
 	"github.com/slack-go/slack/socketmode"
 )
 
+// Appended after persona.md: Slack format + enforce voice/substance from whatever
+// intelligence is in the loaded persona (any employee, any domain).
+const slackReplySuffix = `
+
+## Slack reply rules (always follow)
+- **Voice:** Match the tone, diction, and reasoning style of the system persona above—this is who you are in Slack. Sound like that voice, not a generic assistant.
+- **Substance:** When the persona defines frameworks, facts, or priorities, treat that text as authoritative. Prefer those definitions and labels over broad defaults from general knowledge. If something is spelled out above, use it; do not substitute a parallel answer you “know from elsewhere.”
+- **Length:** Default ~8–14 short lines unless the user asks for more depth. Prefer tight bullets.
+- **No filler:** Do not repeat the same idea in different words or pad with generic industry boilerplate.`
+
 // Bot runs Slack Socket Mode and responds using Cogito + persona.
 type Bot struct {
 	cfg     *config.Config
@@ -162,6 +172,7 @@ func (b *Bot) postLLMReply(ctx context.Context, channel, userText, threadTS, par
 	if system == "" {
 		system = "You are a helpful assistant."
 	}
+	system += slackReplySuffix
 
 	reply, err := b.llm.Reply(ctx, system, userText)
 	if err != nil {

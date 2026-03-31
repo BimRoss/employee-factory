@@ -12,6 +12,12 @@ Go + [Cogito](https://github.com/mudler/cogito) workers that act as **BimRoss â€
 
 Health: `GET /health`, `GET /readyz` on `HTTP_ADDR` (default `:8080`).
 
+### Slack length and models
+
+- Default **`LLM_MAX_TOKENS`** is **512** so answers stay digestible. Override with env if you need longer replies.
+- The bot appends **Slack reply rules** to the system prompt (match the personaâ€™s voice and substance; short bullets; no filler; prefer definitions from the loaded `persona.md` over generic pretraining).
+- **Small models (e.g. 1B)** often attend poorly to very long system prompts; if answers still ignore the persona after the prompt above, try a **larger instruct model** on Chutes via `LLM_MODEL` / ConfigMap and keep `LLM_MAX_TOKENS` moderate unless you truly want essays.
+
 ## Kubernetes
 
 Manifests live in [`rancher-admin`](../rancher-admin/admin/apps/employee-factory/):

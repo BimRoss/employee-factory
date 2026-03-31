@@ -44,8 +44,9 @@ func (e *EmployeeLLM) Reply(ctx context.Context, systemPersona, userText string)
 
 	messages := frag.GetMessages()
 	req := openai.ChatCompletionRequest{
-		Messages:  messages,
-		MaxTokens: e.maxTokens,
+		Messages:    messages,
+		MaxTokens:   e.maxTokens,
+		Temperature: 0.55,
 	}
 
 	resp, err := e.inner.CreateChatCompletion(ctx, req)
