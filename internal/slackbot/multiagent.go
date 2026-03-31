@@ -192,9 +192,10 @@ func formatPriorSquadTurns(slots []string, slotIndex int, squadMsgs []slack.Mess
 	return out
 }
 
-// runMultiagentSession coordinates sequential in-thread replies. threadRootTS is the Slack thread parent ts.
+// runMultiagentSession coordinates sequential replies on the channel timeline (no thread_ts).
+// messageTS is the triggering message timestamp; squad coordination uses messages posted after it.
 // participants is the ordered squad subset (explicit @mentions) or full MULTIAGENT_ORDER (broadcast).
-func (b *Bot) runMultiagentSession(ctx context.Context, channel, rawText string, threadTS, messageTS string, isIM bool, participants []string) {
+func (b *Bot) runMultiagentSession(ctx context.Context, channel, rawText string, messageTS string, isIM bool, participants []string) {
 	if isIM || !b.cfg.MultiagentConfigured() {
 		return
 	}
@@ -207,9 +208,9 @@ func (b *Bot) runMultiagentSession(ctx context.Context, channel, rawText string,
 		return
 	}
 
-	threadRoot := strings.TrimSpace(messageTS)
-	if ts := strings.TrimSpace(threadTS); ts != "" {
-		threadRoot = ts
+	anchorTS := strings.TrimSpace(messageTS)
+	if anchorTS == "" {
+		return
 	}
 
 	squadSet := squadUserIDSet(b.cfg)
@@ -231,7 +232,7 @@ func (b *Bot) runMultiagentSession(ctx context.Context, channel, rawText string,
 			continue
 		}
 		waitCtx, cancel := context.WithTimeout(ctx, deadline)
-		msgs, err := b.waitUntilSlot(waitCtx, channel, threadRoot, slots, k, poll)
+		msgs, err := b.waitUntilSlot(waitCtx, channel, anchorTS, slots, k, poll)
 		cancel()
 		if err != nil {
 			log.Printf("multiagent: slot %d wait failed (employee=%s): %v", k, b.cfg.EmployeeID, err)
@@ -247,14 +248,14 @@ func (b *Bot) runMultiagentSession(ctx context.Context, channel, rawText string,
 			userPayload = router.WrapAlexUserMessage(userPayload)
 		}
 
-		b.postMultiagentReply(ctx, channel, userPayload, threadRoot)
+		b.postMultiagentReply(ctx, channel, userPayload)
 	}
 }
 
-func (b *Bot) waitUntilSlot(ctx context.Context, channelID, threadRootTS string, slots []string, slotIndex int, poll time.Duration) ([]slack.Message, error) {
+func (b *Bot) waitUntilSlot(ctx context.Context, channelID, parentTS string, slots []string, slotIndex int, poll time.Duration) ([]slack.Message, error) {
 	k := slotIndex
 	for {
-		msgs, err := b.squadMessagesInThread(ctx, channelID, threadRootTS)
+		msgs, err := b.squadMessagesInChannelAfter(ctx, channelID, parentTS)
 		if err != nil {
 			return nil, err
 		}
@@ -269,25 +270,34 @@ func (b *Bot) waitUntilSlot(ctx context.Context, channelID, threadRootTS string,
 	}
 }
 
-func (b *Bot) squadMessagesInThread(ctx context.Context, channelID, threadRootTS string) ([]slack.Message, error) {
+// squadMessagesInChannelAfter returns squad-bot messages posted to the channel after parentTS (exclusive),
+// oldest-first. Used instead of thread replies so #chat stays a single timeline.
+func (b *Bot) squadMessagesInChannelAfter(ctx context.Context, channelID, parentTS string) ([]slack.Message, error) {
 	squad := squadUserIDSet(b.cfg)
-	params := &slack.GetConversationRepliesParameters{
-		ChannelID: channelID,
-		Timestamp: threadRootTS,
-		Limit:     b.cfg.LLMThreadMaxMessages,
+	limit := b.cfg.LLMThreadMaxMessages
+	if limit < 50 {
+		limit = 50
 	}
-	msgs, _, _, err := b.api.GetConversationRepliesContext(ctx, params)
+	params := &slack.GetConversationHistoryParameters{
+		ChannelID: channelID,
+		Oldest:    parentTS,
+		Inclusive: false,
+		Limit:     limit,
+	}
+	resp, err := b.api.GetConversationHistoryContext(ctx, params)
 	if err != nil {
 		return nil, err
 	}
+	parentF := parseSlackTSToFloat(parentTS)
 	var out []slack.Message
-	for _, m := range msgs {
-		if strings.TrimSpace(m.Timestamp) == strings.TrimSpace(threadRootTS) {
+	for _, m := range resp.Messages {
+		if parseSlackTSToFloat(m.Timestamp) <= parentF {
 			continue
 		}
-		if squad[m.User] {
-			out = append(out, m)
+		if m.User == "" || !squad[m.User] {
+			continue
 		}
+		out = append(out, m)
 	}
 	sort.Slice(out, func(i, j int) bool {
 		return parseSlackTSToFloat(out[i].Timestamp) < parseSlackTSToFloat(out[j].Timestamp)
@@ -295,7 +305,7 @@ func (b *Bot) squadMessagesInThread(ctx context.Context, channelID, threadRootTS
 	return out, nil
 }
 
-func (b *Bot) postMultiagentReply(ctx context.Context, channel, userPayload, threadRootTS string) {
+func (b *Bot) postMultiagentReply(ctx context.Context, channel, userPayload string) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
@@ -313,10 +323,7 @@ func (b *Bot) postMultiagentReply(ctx context.Context, channel, userPayload, thr
 	reply, err := b.llm.Reply(ctx, persona, slackReplySuffix, userPayload)
 	if err != nil {
 		log.Printf("llm reply error: %v", err)
-		opts := []slack.MsgOption{
-			slack.MsgOptionText("Sorry, I hit an error generating a reply.", false),
-			slack.MsgOptionTS(threadRootTS),
-		}
+		opts := []slack.MsgOption{slack.MsgOptionText("Sorry, I hit an error generating a reply.", false)}
 		_, _, err = b.api.PostMessageContext(ctx, channel, opts...)
 		if err != nil {
 			log.Printf("slack post message: %v", err)
@@ -331,10 +338,7 @@ func (b *Bot) postMultiagentReply(ctx context.Context, channel, userPayload, thr
 		reply = "…"
 	}
 
-	opts := []slack.MsgOption{
-		slack.MsgOptionText(reply, false),
-		slack.MsgOptionTS(threadRootTS),
-	}
+	opts := []slack.MsgOption{slack.MsgOptionText(reply, false)}
 	_, _, err = b.api.PostMessageContext(ctx, channel, opts...)
 	if err != nil {
 		log.Printf("slack post message: %v", err)

@@ -205,7 +205,7 @@ func (b *Bot) dispatchMultiagentChannel(ctx context.Context, channel, rawText st
 	if len(participants) < 2 {
 		return false
 	}
-	go b.runMultiagentSession(ctx, channel, rawText, threadTS, messageTS, false, participants)
+	go b.runMultiagentSession(ctx, channel, rawText, messageTS, false, participants)
 	return true
 }
 
@@ -222,7 +222,7 @@ func (b *Bot) dispatchBroadcastMultiagent(ctx context.Context, channel, rawText 
 	if len(participants) < 2 {
 		return false
 	}
-	go b.runMultiagentSession(ctx, channel, rawText, threadTS, messageTS, false, participants)
+	go b.runMultiagentSession(ctx, channel, rawText, messageTS, false, participants)
 	return true
 }
 
