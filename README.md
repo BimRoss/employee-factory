@@ -17,6 +17,7 @@ Health: `GET /health`, `GET /readyz` on `HTTP_ADDR` (default `:8080`).
 - Default **`LLM_MAX_TOKENS`** is **1024** (ceiling so replies rarely cut off mid-sentence; brevity comes from the Slack system suffix, not a tiny cap). Lower only if you need hard cost limits.
 - **`LLM_TEMPERATURE`** (default `0.55`) and optional **`LLM_TOP_P`** tune sampling.
 - The bot appends **Slack reply rules** after `persona.md` via a fixed suffix. Persona text is truncated first if **`LLM_SYSTEM_MAX_RUNES`** is exceeded; the suffix is never dropped.
+- In **channels**, a top-level @mention is answered on the **main channel timeline** (not threaded under your message). Replies use a thread only when Slack already sent `thread_ts` (for example you used “Reply in thread”).
 - In **threads** (channel or DM), the bot loads recent messages with **`conversations.replies`** (up to **`LLM_THREAD_MAX_MESSAGES`**, trimmed to **`LLM_THREAD_MAX_RUNES`**) and prepends them to the user message—no extra LLM call.
 - In **linear DMs / MPIMs** (no `thread_ts`), it loads prior turns with **`conversations.history`** before the current message—same limits and prepended format—so you do not have to thread every reply in a DM.
 - For **Alex** (`EMPLOYEE_ID=alex` or empty), optional deterministic **keyword hints** (`LLM_ALEX_HINTS=true`) nudge the model toward the right framework; disable with `LLM_ALEX_HINTS=0` if you want zero hinting.

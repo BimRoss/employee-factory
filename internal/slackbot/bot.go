@@ -192,7 +192,7 @@ func (b *Bot) postLLMReply(ctx context.Context, channel, userText, threadTS, mes
 	if err != nil {
 		log.Printf("llm reply error: %v", err)
 		opts := []slack.MsgOption{slack.MsgOptionText("Sorry, I hit an error generating a reply.", false)}
-		if ts := threadReplyTS(threadTS, messageTS, isIM); ts != "" {
+		if ts := threadReplyTS(threadTS); ts != "" {
 			opts = append(opts, slack.MsgOptionTS(ts))
 		}
 		_, _, _ = b.api.PostMessageContext(ctx, channel, opts...)
@@ -203,7 +203,7 @@ func (b *Bot) postLLMReply(ctx context.Context, channel, userText, threadTS, mes
 	}
 
 	opts := []slack.MsgOption{slack.MsgOptionText(reply, false)}
-	if ts := threadReplyTS(threadTS, messageTS, isIM); ts != "" {
+	if ts := threadReplyTS(threadTS); ts != "" {
 		opts = append(opts, slack.MsgOptionTS(ts))
 	}
 
@@ -213,14 +213,12 @@ func (b *Bot) postLLMReply(ctx context.Context, channel, userText, threadTS, mes
 	}
 }
 
-func threadReplyTS(threadTS, messageTS string, isIM bool) string {
-	if threadTS != "" {
-		return threadTS
-	}
-	if !isIM && messageTS != "" {
-		return messageTS
-	}
-	return ""
+// threadReplyTS chooses Slack's thread_ts for PostMessage. We only thread when the user
+// is already in a thread (threadTS set). For top-level channel @mentions we omit thread_ts
+// so the bot replies on the main channel timeline—matching “chat with Alex in #sales”
+// without collapsing everything into a thread under the first ping.
+func threadReplyTS(threadTS string) string {
+	return threadTS
 }
 
 func (b *Bot) useAlexHints() bool {
