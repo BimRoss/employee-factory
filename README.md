@@ -16,6 +16,7 @@ Manifests live in [`rancher-admin`](../rancher-admin/admin/apps/employee-factory
 
 - Apply namespace, config, persona ConfigMap, NetworkPolicy, RBAC, Deployment, Service, CronJob (or rely on `scripts/update-runtime-secrets.sh` to create the namespace).
 - Secrets: run **`./scripts/update-runtime-secrets.sh`** from a filled-in `.env`. It applies **`employee-factory-alex-runtime`** (LLM + Slack; optional `LLM_MODEL` / `{EMPLOYEE_ID}_MODEL`) and **`employee-factory-persona-sync-git`** with **`GITHUB_TOKEN`** sourced from **`CURSOR_RULES_GITHUB_TOKEN`** (or `GITHUB_TOKEN`) for the persona CronJob clone of `bimross/cursor-rules`. If `KUBECONFIG` is unset, the script defaults to `~/.kube/config/grant-admin.yaml` when present. Override with `KUBECONFIG=/path/to/kubeconfig` if needed. Use `SKIP_GIT_SECRET=1` or `SKIP_RUNTIME_SECRET=1` to update only one.
+- **Docker Hub pull**: manifests use **`imagePullSecrets: dockerhub-pull`**. That secret must exist in namespace **`employee-factory`** (Kubernetes secrets are per-namespace). From [`rancher-admin`](../rancher-admin), run **`./scripts/sync-employee-factory-pull-secret.sh`** once to copy `dockerhub-pull` from `subnet-signal`. Without it, pods show **ImagePullBackOff** for `geeemoney/*` images.
 
 ## CI/CD
 
