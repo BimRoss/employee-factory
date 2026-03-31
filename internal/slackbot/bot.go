@@ -138,11 +138,11 @@ func (b *Bot) onMessage(ctx context.Context, ev *slackevents.MessageEvent) {
 	if channel == "" && ev.Message != nil {
 		channel = strings.TrimSpace(ev.Message.Channel)
 	}
-	text := strings.TrimSpace(ev.Text)
-	if text == "" && ev.Message != nil {
-		text = strings.TrimSpace(ev.Message.Text)
+	rawText := strings.TrimSpace(ev.Text)
+	if rawText == "" && ev.Message != nil {
+		rawText = strings.TrimSpace(ev.Message.Text)
 	}
-	if channel == "" || text == "" {
+	if channel == "" || rawText == "" {
 		return
 	}
 
@@ -150,33 +150,57 @@ func (b *Bot) onMessage(ctx context.Context, ev *slackevents.MessageEvent) {
 	isIM := strings.HasPrefix(channel, "D") || ev.ChannelType == "im" || ev.ChannelType == "mpim"
 	if !isIM {
 		mention := fmt.Sprintf("<@%s>", b.botUserID)
-		if !strings.Contains(text, mention) {
+		if !strings.Contains(rawText, mention) {
 			return
 		}
-		text = strings.TrimSpace(strings.ReplaceAll(strings.ReplaceAll(text, mention, ""), "  ", " "))
+		if b.dispatchMultiagentChannel(ctx, channel, rawText, ev.ThreadTimeStamp, ev.TimeStamp) {
+			return
+		}
+		text := strings.TrimSpace(strings.ReplaceAll(strings.ReplaceAll(rawText, mention, ""), "  ", " "))
+		if text == "" {
+			return
+		}
+		b.postLLMReply(ctx, channel, text, ev.ThreadTimeStamp, ev.TimeStamp, isIM)
+		return
 	}
 
-	b.postLLMReply(ctx, channel, text, ev.ThreadTimeStamp, ev.TimeStamp, isIM)
+	b.postLLMReply(ctx, channel, rawText, ev.ThreadTimeStamp, ev.TimeStamp, isIM)
 }
 
 func (b *Bot) onAppMention(ctx context.Context, ev *slackevents.AppMentionEvent) {
 	if ev == nil || ev.User == b.botUserID {
 		return
 	}
-	text := strings.TrimSpace(ev.Text)
-	if text == "" {
-		return
-	}
-	mention := fmt.Sprintf("<@%s>", b.botUserID)
-	text = strings.TrimSpace(strings.ReplaceAll(strings.ReplaceAll(text, mention, ""), "  ", " "))
-	if text == "" {
+	rawText := strings.TrimSpace(ev.Text)
+	if rawText == "" {
 		return
 	}
 	channel := strings.TrimSpace(ev.Channel)
 	if channel == "" {
 		return
 	}
+	if b.dispatchMultiagentChannel(ctx, channel, rawText, ev.ThreadTimeStamp, ev.TimeStamp) {
+		return
+	}
+	mention := fmt.Sprintf("<@%s>", b.botUserID)
+	text := strings.TrimSpace(strings.ReplaceAll(strings.ReplaceAll(rawText, mention, ""), "  ", " "))
+	if text == "" {
+		return
+	}
 	b.postLLMReply(ctx, channel, text, ev.ThreadTimeStamp, ev.TimeStamp, false)
+}
+
+// dispatchMultiagentChannel starts a sequential multi-bot session when squad env is configured
+// and two or more squad bots are mentioned. Single-bot behavior stays in the caller.
+func (b *Bot) dispatchMultiagentChannel(ctx context.Context, channel, rawText string, threadTS, messageTS string) bool {
+	if !b.cfg.MultiagentConfigured() {
+		return false
+	}
+	if len(mentionedSquadKeys(rawText, b.cfg)) < 2 {
+		return false
+	}
+	go b.runMultiagentSession(ctx, channel, rawText, threadTS, messageTS, false)
+	return true
 }
 
 func (b *Bot) postLLMReply(ctx context.Context, channel, userText, threadTS, messageTS string, isIM bool) {

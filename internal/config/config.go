@@ -44,6 +44,14 @@ type Config struct {
 
 	PersonaPath     string
 	PersonaReloadMS int
+
+	// Multiagent: shared Slack user IDs + order for sequential multi-bot channel sessions (see slackbot).
+	// When unset, multi-agent mode is off and behavior matches single-bot replies.
+	MultiagentEnabled        bool
+	MultiagentBotUserIDs     map[string]string // employee key -> Slack user ID, e.g. ross -> U123
+	MultiagentOrder          []string          // employee keys, e.g. ross, tim, alex
+	MultiagentPollInterval   int               // milliseconds between Slack polls while waiting
+	MultiagentWaitTimeoutSec int               // max wait for a predecessor to post
 }
 
 // Load reads environment variables. Canonical keys (LLM_*, SLACK_*) take precedence;
@@ -74,18 +82,22 @@ func Load() (*Config, error) {
 		LLMAPIKey:         strings.TrimSpace(firstNonEmpty(os.Getenv("LLM_API_KEY"), employeePrefixed(empID, "CHUTES_KEY"), os.Getenv("ALEX_CHUTES_KEY"))),
 		LLMSystemMaxRunes: parseIntEnvSigned("LLM_SYSTEM_MAX_RUNES", 48000),
 		// Default ceiling avoids mid-sentence cutoffs; brevity comes from the Slack system suffix, not a tiny cap.
-		LLMMaxTokens:       parseIntEnvMin("LLM_MAX_TOKENS", 1024, 1),
-		LLMTemperature:     parseFloat32Env("LLM_TEMPERATURE", 0.55),
-		LLMTopP:              parseOptionalFloat32("LLM_TOP_P"),
-		LLMThreadMaxMessages: parseIntEnvMin("LLM_THREAD_MAX_MESSAGES", 25, 1),
-		LLMThreadMaxRunes:    parseIntEnvMin("LLM_THREAD_MAX_RUNES", 16000, 256),
-		LLMAlexHints:         parseBoolEnv("LLM_ALEX_HINTS", true),
+		LLMMaxTokens:              parseIntEnvMin("LLM_MAX_TOKENS", 1024, 1),
+		LLMTemperature:            parseFloat32Env("LLM_TEMPERATURE", 0.55),
+		LLMTopP:                   parseOptionalFloat32("LLM_TOP_P"),
+		LLMThreadMaxMessages:      parseIntEnvMin("LLM_THREAD_MAX_MESSAGES", 25, 1),
+		LLMThreadMaxRunes:         parseIntEnvMin("LLM_THREAD_MAX_RUNES", 16000, 256),
+		LLMAlexHints:              parseBoolEnv("LLM_ALEX_HINTS", true),
 		SlackOutboundWindowSec:    parseIntEnvMin("SLACK_OUTBOUND_WINDOW_SEC", 60, 1),
-		SlackOutboundMaxPerWindow: parseIntEnvDefaultOrZero("SLACK_OUTBOUND_MAX_PER_WINDOW", 3),
-		SlackBotToken:   strings.TrimSpace(firstNonEmpty(os.Getenv("SLACK_BOT_TOKEN"), employeePrefixed(empID, "SLACK_BOT_TOKEN"), os.Getenv("ALEX_SLACK_BOT_TOKEN"))),
-		SlackAppToken:   strings.TrimSpace(firstNonEmpty(os.Getenv("SLACK_APP_TOKEN"), employeePrefixed(empID, "SLACK_APP_TOKEN"), os.Getenv("ALEX_SLACK_APP_TOKEN"))),
-		PersonaPath:     getEnv("PERSONA_PATH", "/config/persona.md"),
-		PersonaReloadMS: parseIntEnv("PERSONA_RELOAD_MS", 60000),
+		SlackOutboundMaxPerWindow: parseIntEnvDefaultOrZero("SLACK_OUTBOUND_MAX_PER_WINDOW", 10),
+		SlackBotToken:             strings.TrimSpace(firstNonEmpty(os.Getenv("SLACK_BOT_TOKEN"), employeePrefixed(empID, "SLACK_BOT_TOKEN"), os.Getenv("ALEX_SLACK_BOT_TOKEN"))),
+		SlackAppToken:             strings.TrimSpace(firstNonEmpty(os.Getenv("SLACK_APP_TOKEN"), employeePrefixed(empID, "SLACK_APP_TOKEN"), os.Getenv("ALEX_SLACK_APP_TOKEN"))),
+		PersonaPath:               getEnv("PERSONA_PATH", "/config/persona.md"),
+		PersonaReloadMS:           parseIntEnv("PERSONA_RELOAD_MS", 60000),
+	}
+
+	if err := parseMultiagentEnv(cfg); err != nil {
+		return nil, err
 	}
 
 	if cfg.LLMAPIKey == "" {
@@ -99,6 +111,81 @@ func Load() (*Config, error) {
 	}
 
 	return cfg, nil
+}
+
+// MultiagentConfigured reports whether multi-agent sequencing can activate (squad map + order present and enabled).
+func (c *Config) MultiagentConfigured() bool {
+	if c == nil || !c.MultiagentEnabled {
+		return false
+	}
+	return len(c.MultiagentBotUserIDs) > 0 && len(c.MultiagentOrder) > 0
+}
+
+func parseMultiagentEnv(cfg *Config) error {
+	raw := strings.TrimSpace(os.Getenv("MULTIAGENT_BOT_USER_IDS"))
+	orderRaw := strings.TrimSpace(os.Getenv("MULTIAGENT_ORDER"))
+	if raw == "" && orderRaw == "" {
+		cfg.MultiagentEnabled = false
+		return nil
+	}
+	if raw == "" || orderRaw == "" {
+		return fmt.Errorf("multi-agent: set both MULTIAGENT_BOT_USER_IDS and MULTIAGENT_ORDER, or omit both")
+	}
+
+	m := make(map[string]string)
+	for _, part := range strings.Split(raw, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		kv := strings.SplitN(part, ":", 2)
+		if len(kv) != 2 {
+			return fmt.Errorf("multi-agent: invalid MULTIAGENT_BOT_USER_IDS entry %q (want ross:U123,...)", part)
+		}
+		key := strings.ToLower(strings.TrimSpace(kv[0]))
+		uid := strings.TrimSpace(kv[1])
+		if key == "" || uid == "" {
+			return fmt.Errorf("multi-agent: empty key or user id in %q", part)
+		}
+		m[key] = uid
+	}
+	if len(m) == 0 {
+		return fmt.Errorf("multi-agent: MULTIAGENT_BOT_USER_IDS parsed empty")
+	}
+
+	var order []string
+	for _, part := range strings.Split(orderRaw, ",") {
+		part = strings.ToLower(strings.TrimSpace(part))
+		if part == "" {
+			continue
+		}
+		if _, ok := m[part]; !ok {
+			return fmt.Errorf("multi-agent: MULTIAGENT_ORDER key %q missing from MULTIAGENT_BOT_USER_IDS", part)
+		}
+		order = append(order, part)
+	}
+	if len(order) == 0 {
+		return fmt.Errorf("multi-agent: MULTIAGENT_ORDER empty")
+	}
+	for k := range m {
+		found := false
+		for _, o := range order {
+			if o == k {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return fmt.Errorf("multi-agent: employee %q in MULTIAGENT_BOT_USER_IDS but not in MULTIAGENT_ORDER", k)
+		}
+	}
+
+	cfg.MultiagentBotUserIDs = m
+	cfg.MultiagentOrder = order
+	cfg.MultiagentPollInterval = parseIntEnvMin("MULTIAGENT_POLL_INTERVAL_MS", 800, 50)
+	cfg.MultiagentWaitTimeoutSec = parseIntEnvMin("MULTIAGENT_WAIT_TIMEOUT_SEC", 300, 5)
+	cfg.MultiagentEnabled = parseBoolEnv("MULTIAGENT_ENABLED", true)
+	return nil
 }
 
 func getEnv(key, def string) string {
