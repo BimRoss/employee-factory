@@ -16,6 +16,17 @@ func TestFormatOutgoingSlackMessage_GitHubBold(t *testing.T) {
 	}
 }
 
+func TestFormatOutgoingSlackMessage_strayDoubleStars(t *testing.T) {
+	in := "**Next: Subnet Signal**—measure before build."
+	out := formatOutgoingSlackMessage(in, nil)
+	if strings.Contains(out, "**") {
+		t.Fatalf("expected no ** left, got %q", out)
+	}
+	if !strings.Contains(out, "Next: Subnet Signal") {
+		t.Fatalf("got %q", out)
+	}
+}
+
 func TestFormatOutgoingSlackMessage_heading(t *testing.T) {
 	in := "## Next step\nDo the thing."
 	out := formatOutgoingSlackMessage(in, nil)

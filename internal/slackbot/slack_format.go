@@ -42,6 +42,11 @@ func convertGitHubBoldToSlack(s string) string {
 		}
 		s = next
 	}
+	// Models still emit stray ** (nested emphasis, odd spans, punctuation edge cases).
+	// Repeatedly collapse ** → * until none remain so Slack never shows literal double asterisks.
+	for i := 0; i < 32 && strings.Contains(s, "**"); i++ {
+		s = strings.ReplaceAll(s, "**", "*")
+	}
 	return s
 }
 
