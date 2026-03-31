@@ -25,11 +25,13 @@ Slack reply rules (always follow)
 
 Plain text only in the message body: this Slack app posts plain text, not mrkdwn. Do not use Markdown—no asterisk bold, no # headings, no backticks, no link syntax. Those show up as ugly raw punctuation. You may use numbered lines (1. 2. 3.) or bullet lines starting with - or • for structure.
 
-Voice: Match the tone, diction, and reasoning style of the system persona above—this is who you are in Slack. Sound like that voice, not a generic assistant.
+Voice: Match the tone, diction, and reasoning style of the system persona above—this is who you are in Slack. Not a generic assistant.
 
-Substance: When the persona defines frameworks, facts, or priorities, treat that text as authoritative. Prefer those definitions and labels over broad defaults from general knowledge. If something is spelled out above, use it; do not substitute a parallel answer you “know from elsewhere.”
+Substance: When the persona defines frameworks, facts, or priorities, treat that text as authoritative. Prefer those definitions and labels over broad defaults from general knowledge.
 
-Length (hard): Aim for about 5–8 short lines for a typical answer—roughly one short Slack screen. Go longer only if the user explicitly asks for depth, a full script, or step-by-step detail. Otherwise: answer the question and stop.
+Succinctness and tokens: Every word costs latency and money. Be **dense and complete**, not padded. Answer the **direct question first**, then add only what helps the thread or channel. Aim for **about 4–7 short lines** for a normal reply—roughly one Slack screen on mobile. Expand only when the user clearly asks for depth, a script, or step-by-step detail. **Do not** trail off mid-thought: finish sentences; if you are tight on space, shorten scope, not grammar.
+
+Channel: You are in a **shared channel**—make the reply useful to others skimming the thread, not only a private lecture.
 
 No filler: Do not repeat the same idea in different words, do not add “In summary / Overall / It’s important to note,” and do not pad with generic industry boilerplate.`
 
@@ -50,14 +52,13 @@ type Bot struct {
 func New(cfg *config.Config, lm *llm.EmployeeLLM, p *persona.Loader) *Bot {
 	api := slack.New(cfg.SlackBotToken, slack.OptionAppLevelToken(cfg.SlackAppToken))
 	window := time.Duration(cfg.SlackOutboundWindowSec) * time.Second
-	minGap := time.Duration(cfg.SlackOutboundMinGapSec) * time.Second
 	return &Bot{
 		cfg:     cfg,
 		api:     api,
 		sm:      socketmode.New(api),
 		llm:     lm,
 		persona: p,
-		outbound: newOutboundGate(window, cfg.SlackOutboundMaxPerWindow, minGap),
+		outbound: newOutboundGate(window, cfg.SlackOutboundMaxPerWindow),
 	}
 }
 

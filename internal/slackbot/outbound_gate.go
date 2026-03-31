@@ -4,25 +4,23 @@ import (
 	"time"
 )
 
-// outboundGate limits how often this bot posts to Slack. It enforces (1) a rolling
-// maximum number of posts per time window and (2) a minimum gap between consecutive
-// posts—useful when multiple agents @mention each other so conversations cannot run away.
+// outboundGate limits how often this bot posts to Slack using a rolling maximum
+// per time window—useful when multiple agents @mention each other so conversations
+// cannot run away. Further messages simply wait for the next human (or later) ping.
 type outboundGate struct {
 	window   time.Duration
 	maxPosts int
-	minGap   time.Duration
 
 	times []time.Time
 }
 
-func newOutboundGate(window time.Duration, maxPosts int, minGap time.Duration) *outboundGate {
+func newOutboundGate(window time.Duration, maxPosts int) *outboundGate {
 	if maxPosts <= 0 {
 		return nil
 	}
 	return &outboundGate{
 		window:   window,
 		maxPosts: maxPosts,
-		minGap:   minGap,
 	}
 }
 
@@ -32,16 +30,7 @@ func (g *outboundGate) allow(now time.Time) bool {
 		return true
 	}
 	g.prune(now)
-	if len(g.times) >= g.maxPosts {
-		return false
-	}
-	if len(g.times) > 0 {
-		last := g.times[len(g.times)-1]
-		if now.Sub(last) < g.minGap {
-			return false
-		}
-	}
-	return true
+	return len(g.times) < g.maxPosts
 }
 
 // record notes a successful outbound post at now (call only after PostMessage succeeds).
