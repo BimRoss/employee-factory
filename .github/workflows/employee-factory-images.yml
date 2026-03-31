@@ -58,53 +58,11 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-  persona-sync:
-    runs-on: ubuntu-latest
-    env:
-      IMAGE_NAME: geeemoney/employee-factory-persona-sync
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Login to Docker Hub
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      - name: Extract metadata (tags, labels)
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.IMAGE_NAME }}
-          tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
-            type=raw,value=build,enable=${{ !startsWith(github.ref, 'refs/tags/') }}
-
-      - name: Build and push
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: deploy/docker/persona-sync.Dockerfile
-          push: ${{ startsWith(github.ref, 'refs/tags/') }}
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          platforms: linux/amd64
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
   gitops-release:
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     needs:
       - employee-factory
-      - persona-sync
     env:
       RANCHER_ADMIN_REPO: bimross/rancher-admin
     steps:
@@ -133,20 +91,11 @@ jobs:
           import re
 
           version = os.environ["VERSION"]
-          base = Path("rancher-admin/admin/apps/employee-factory")
-
-          targets = {
-              "alex-deployment.yaml": "geeemoney/employee-factory",
-              "persona-sync-cronjob.yaml": "geeemoney/employee-factory-persona-sync",
-              "persona-sync-release-hooks.yaml": "geeemoney/employee-factory-persona-sync",
-          }
-
-          for rel_path, image_repo in targets.items():
-              path = base / rel_path
-              content = path.read_text()
-              pattern = rf"({re.escape(image_repo)}:)[^\s\"']+"
-              updated = re.sub(pattern, lambda m: f"{m.group(1)}{version}", content)
-              path.write_text(updated)
+          path = Path("rancher-admin/admin/apps/employee-factory/alex-deployment.yaml")
+          content = path.read_text()
+          pattern = r"(geeemoney/employee-factory:)[^\s\"']+"
+          updated = re.sub(pattern, lambda m: f"{m.group(1)}{version}", content)
+          path.write_text(updated)
           PY
 
       - name: Commit and push manifest updates
@@ -160,6 +109,6 @@ jobs:
           fi
           git config user.name "employee-factory-ci"
           git config user.email "employee-factory-ci@users.noreply.github.com"
-          git add admin/apps/employee-factory/
-          git commit -m "release(employee-factory): bump images to ${VERSION}"
+          git add admin/apps/employee-factory/alex-deployment.yaml
+          git commit -m "release(employee-factory): bump image to ${VERSION}"
           git push origin master
