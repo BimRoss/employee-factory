@@ -58,8 +58,8 @@ func Load() (*Config, error) {
 		LLMModel:          llmModel,
 		LLMAPIKey:         strings.TrimSpace(firstNonEmpty(os.Getenv("LLM_API_KEY"), employeePrefixed(empID, "CHUTES_KEY"), os.Getenv("ALEX_CHUTES_KEY"))),
 		LLMSystemMaxRunes: parseIntEnvSigned("LLM_SYSTEM_MAX_RUNES", 48000),
-		// Slack-friendly default: long cap encourages rambling on small instruct models.
-		LLMMaxTokens:    parseIntEnvMin("LLM_MAX_TOKENS", 512, 1),
+		// Slack: 512 tokens still allows essay-length output; default lower—override for long-form.
+		LLMMaxTokens:    parseIntEnvMin("LLM_MAX_TOKENS", 256, 1),
 		SlackBotToken:   strings.TrimSpace(firstNonEmpty(os.Getenv("SLACK_BOT_TOKEN"), employeePrefixed(empID, "SLACK_BOT_TOKEN"), os.Getenv("ALEX_SLACK_BOT_TOKEN"))),
 		SlackAppToken:   strings.TrimSpace(firstNonEmpty(os.Getenv("SLACK_APP_TOKEN"), employeePrefixed(empID, "SLACK_APP_TOKEN"), os.Getenv("ALEX_SLACK_APP_TOKEN"))),
 		PersonaPath:     getEnv("PERSONA_PATH", "/config/persona.md"),

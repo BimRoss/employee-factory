@@ -14,16 +14,16 @@ Health: `GET /health`, `GET /readyz` on `HTTP_ADDR` (default `:8080`).
 
 ### Slack length and models
 
-- Default **`LLM_MAX_TOKENS`** is **512** so answers stay digestible. Override with env if you need longer replies.
-- The bot appends **Slack reply rules** to the system prompt (match the persona’s voice and substance; short bullets; no filler; prefer definitions from the loaded `persona.md` over generic pretraining).
-- **Small models (e.g. 1B)** often attend poorly to very long system prompts; if answers still ignore the persona after the prompt above, try a **larger instruct model** on Chutes via `LLM_MODEL` / ConfigMap and keep `LLM_MAX_TOKENS` moderate unless you truly want essays.
+- Default **`LLM_MAX_TOKENS`** is **256** (tight cap—raise via env only if you want longer replies).
+- The bot appends **Slack reply rules** to the system prompt (match persona voice/substance; **5–8 lines** default; no filler).
+- **1B** models are cheap but weak at following long system prompts and staying brief. For better adherence to `persona.md` and cleaner answers, move to an **~8B instruct-class** model on Chutes (check the live [LLM list](https://chutes.ai/app?type=llm) for IDs, pricing, and availability—pick an **Instruct** chat model, not base). Keep `LLM_MAX_TOKENS` low unless you explicitly want long outputs.
 
 ## Kubernetes
 
 Manifests live in [`rancher-admin`](../rancher-admin/admin/apps/employee-factory/):
 
 - Apply namespace, config, persona ConfigMap, NetworkPolicy, RBAC, Deployment, Service, CronJob (or rely on `scripts/update-runtime-secrets.sh` to create the namespace).
-- **Persona looks like two lines in Rancher?** The hourly sync renders all `alex-*.mdc` into ConfigMap `employee-factory-alex-persona` (`data.persona.md`). Rancher Fleet must **ignore drift** on that ConfigMap’s `data` (and the CronJob’s `employee-factory/*` annotations); otherwise git’s baseline `persona.md` is reapplied and wipes the rendered rules. See `rancher-admin/admin/fleet.yaml` `diff.comparePatches` for `employee-factory-alex-persona`. After fixing Fleet, run a sync job once: `kubectl -n employee-factory create job persona-sync-now --from=cronjob/employee-factory-persona-sync`.
+- **Persona looks like two lines in Rancher?** The hourly sync renders all `alex-*.mdc` into ConfigMap `employee-factory-alex-persona` (`data.persona.md`). Rancher Fleet must **ignore drift** on that ConfigMap’s `data` (and the CronJob’s `employee-factory/*` annotations); otherwise git’s baseline `persona.md` is reapplied and wipes the rendered rules. See **`rancher-admin/admin/apps/employee-factory/fleet.yaml`** `diff.comparePatches` (per-app bundle, same idea as thread-pilot). After fixing Fleet, run a sync job once: `kubectl -n employee-factory create job persona-sync-now --from=cronjob/employee-factory-persona-sync`.
 - Secrets: run **`./scripts/update-runtime-secrets.sh`** from a filled-in `.env`. It applies **`employee-factory-alex-runtime`** (LLM + Slack; optional `LLM_MODEL` / `{EMPLOYEE_ID}_MODEL`) and **`employee-factory-persona-sync-git`** with **`GITHUB_TOKEN`** sourced from **`CURSOR_RULES_GITHUB_TOKEN`** (or `GITHUB_TOKEN`) for the persona CronJob clone of `bimross/cursor-rules`. If `KUBECONFIG` is unset, the script defaults to `~/.kube/config/grant-admin.yaml` when present. Override with `KUBECONFIG=/path/to/kubeconfig` if needed. Use `SKIP_GIT_SECRET=1` or `SKIP_RUNTIME_SECRET=1` to update only one.
 - **Docker Hub pull**: manifests use **`imagePullSecrets: dockerhub-pull`**. That secret must exist in namespace **`employee-factory`** (Kubernetes secrets are per-namespace). From [`rancher-admin`](../rancher-admin), run **`./scripts/sync-employee-factory-pull-secret.sh`** once to copy `dockerhub-pull` from `subnet-signal`. Without it, pods show **ImagePullBackOff** for `geeemoney/*` images.
 
