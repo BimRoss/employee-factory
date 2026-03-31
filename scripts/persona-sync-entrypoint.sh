@@ -46,6 +46,11 @@ kubectl -n "${NAMESPACE}" annotate configmap "${CM_NAME}" \
   "employee-factory/synced-at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
   --overwrite
 
-kubectl -n "${NAMESPACE}" rollout restart "deployment/${DEPLOY_NAME}" || true
+# Helm pre-upgrade hook sets SKIP_ROLLOUT_RESTART=1 so we refresh the ConfigMap
+# before the Deployment upgrade rolls new pods (they mount the updated persona).
+# Full syncs (CronJob, post-install hook) omit this and restart so subPath picks up changes.
+if [[ "${SKIP_ROLLOUT_RESTART:-}" != "1" ]]; then
+  kubectl -n "${NAMESPACE}" rollout restart "deployment/${DEPLOY_NAME}" || true
+fi
 
 echo "persona sync complete sha=${SHA}"

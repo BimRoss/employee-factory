@@ -138,6 +138,7 @@ jobs:
           targets = {
               "alex-deployment.yaml": "geeemoney/employee-factory",
               "persona-sync-cronjob.yaml": "geeemoney/employee-factory-persona-sync",
+              "persona-sync-release-hooks.yaml": "geeemoney/employee-factory-persona-sync",
           }
 
           for rel_path, image_repo in targets.items():
