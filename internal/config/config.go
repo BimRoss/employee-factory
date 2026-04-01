@@ -63,10 +63,10 @@ type Config struct {
 	// MultiagentBroadcastHandoffProbability: same as above for @everyone / <!channel> multiagent runs only.
 	// When unset in env, defaults to MultiagentHandoffProbability (typically 0.5).
 	MultiagentBroadcastHandoffProbability float64
-	// MultiagentBroadcastTargetMessages: desired mean total squad posts per broadcast trigger (rounds scale with squad size).
-	MultiagentBroadcastTargetMessages int
-	// MultiagentBroadcastMaxRounds: upper bound on full ordered passes for broadcast; 0 = default 6.
-	MultiagentBroadcastMaxRounds int
+	// MultiagentShuffleSecret: optional; mixed into the SHA-256 seed for <!everyone> / <!channel> turn order (set the same on all squad pods).
+	MultiagentShuffleSecret string
+	// MultiagentBroadcastRounds: number of full passes over the shuffled squad per broadcast (default 1: each agent replies once).
+	MultiagentBroadcastRounds int
 	// MultiagentSquadRunMax: max squad-bot messages in the current run (after last non-squad user); 0 = no cap.
 	MultiagentSquadRunMax int
 
@@ -269,8 +269,11 @@ func parseMultiagentEnv(cfg *Config) error {
 			cfg.MultiagentBroadcastHandoffProbability = f
 		}
 	}
-	cfg.MultiagentBroadcastTargetMessages = parseIntEnvMin("MULTIAGENT_BROADCAST_TARGET_MESSAGES", 10, 1)
-	cfg.MultiagentBroadcastMaxRounds = parseIntEnvMin("MULTIAGENT_BROADCAST_MAX_ROUNDS", 6, 1)
+	cfg.MultiagentShuffleSecret = strings.TrimSpace(os.Getenv("MULTIAGENT_SHUFFLE_SECRET"))
+	cfg.MultiagentBroadcastRounds = parseIntEnvMin("MULTIAGENT_BROADCAST_ROUNDS", 1, 1)
+	if cfg.MultiagentBroadcastRounds > 24 {
+		cfg.MultiagentBroadcastRounds = 24
+	}
 	cfg.MultiagentSquadRunMax = parseIntEnvDefaultOrZero("MULTIAGENT_SQUAD_RUN_MAX", 12)
 	return nil
 }

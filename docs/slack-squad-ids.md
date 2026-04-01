@@ -7,7 +7,7 @@ These are the **Slack bot user IDs** (`auth.test` / Bot User) used for multi-age
 Update IDs in **one place** and mirror here:
 
 1. **`bimross/rancher-admin`**: `admin/apps/employee-factory/configmap.yaml`  
-   Keys: `ROSS_SLACK_BOT_ID`, `TIM_SLACK_BOT_ID`, `ALEX_SLACK_BOT_ID`, `GARTH_SLACK_BOT_ID`, plus `MULTIAGENT_ORDER`.
+   Keys: `ROSS_SLACK_BOT_ID`, `TIM_SLACK_BOT_ID`, `ALEX_SLACK_BOT_ID`, `GARTH_SLACK_BOT_ID`, plus `MULTIAGENT_ORDER`, `MULTIAGENT_BROADCAST_ROUNDS`, and optional `MULTIAGENT_SHUFFLE_SECRET` (same value on all pods if set).
 
 2. **Fleet / cluster**: ConfigMap `employee-factory-config` in namespace `employee-factory` (all four deployments use `envFrom` this ConfigMap).
 

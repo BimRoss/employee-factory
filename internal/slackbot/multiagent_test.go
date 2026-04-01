@@ -1,7 +1,7 @@
 package slackbot
 
 import (
-	"math"
+	"slices"
 	"testing"
 
 	"github.com/bimross/employee-factory/internal/config"
@@ -87,19 +87,54 @@ func TestCountSquadMessagesInRun(t *testing.T) {
 	}
 }
 
-func TestSampleBroadcastRoundCount_meanMessagesNearTarget(t *testing.T) {
-	const iters = 8000
-	participants := 4
-	target := 10
-	maxR := 6
-	var totalMsgs int
-	for i := 0; i < iters; i++ {
-		r := sampleBroadcastRoundCount(participants, target, maxR)
-		totalMsgs += r * participants
+func TestShuffleBroadcastParticipants_deterministic(t *testing.T) {
+	order := []string{"ross", "tim", "alex", "garth"}
+	a := shuffleBroadcastParticipants("1743491234.567890", order, "")
+	b := shuffleBroadcastParticipants("1743491234.567890", order, "")
+	if len(a) != len(order) {
+		t.Fatalf("len %d", len(a))
 	}
-	mean := float64(totalMsgs) / float64(iters)
-	if math.Abs(mean-float64(target)) > 1.5 {
-		t.Fatalf("mean squad messages %.2f want ~%d (4 participants)", mean, target)
+	seen := map[string]bool{}
+	for _, k := range a {
+		seen[k] = true
+	}
+	for _, k := range order {
+		if !seen[k] {
+			t.Fatalf("missing key %q in %v", k, a)
+		}
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			t.Fatalf("same anchor should match: %v vs %v", a, b)
+		}
+	}
+}
+
+func TestShuffleBroadcastParticipants_anchorChangesPermutation(t *testing.T) {
+	order := []string{"ross", "tim", "alex", "garth"}
+	a := shuffleBroadcastParticipants("1743491234.567890", order, "")
+	b := shuffleBroadcastParticipants("1743491234.567891", order, "")
+	if slices.Equal(a, b) {
+		t.Fatalf("expected different permutations for different anchors, got %v", a)
+	}
+}
+
+func TestShuffleBroadcastParticipants_secretChangesPermutation(t *testing.T) {
+	order := []string{"ross", "tim", "alex", "garth"}
+	a := shuffleBroadcastParticipants("1743491234.567890", order, "")
+	b := shuffleBroadcastParticipants("1743491234.567890", order, "salt")
+	if len(a) != len(b) {
+		t.Fatal("length mismatch")
+	}
+	same := true
+	for i := range a {
+		if a[i] != b[i] {
+			same = false
+			break
+		}
+	}
+	if same {
+		t.Fatal("expected secret to change permutation")
 	}
 }
 

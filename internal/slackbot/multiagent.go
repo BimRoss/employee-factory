@@ -2,9 +2,10 @@ package slackbot
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/binary"
 	"fmt"
 	"log"
-	"math"
 	"math/rand"
 	"regexp"
 	"sort"
@@ -67,52 +68,31 @@ func parseMentionedUserIDs(text string) []string {
 // channel-wide broadcast). One pass = each participant posts once in MULTIAGENT_ORDER.
 const multiagentSquadPasses = 1
 
-// sampleBroadcastRoundCount picks how many full passes to run for <!everyone> / <!channel> so mean
-// total squad messages ≈ targetTotal (e.g. 10). Variance comes from randomizing between floor/ceil
-// of targetTotal/participantCount and optional rare ±1 when that value is an integer.
-func sampleBroadcastRoundCount(participantCount, targetTotal, maxRounds int) int {
-	if participantCount < 1 {
-		return 1
+// shuffleBroadcastParticipants returns a pseudorandom permutation of order for this trigger.
+// All squad pods compute the same sequence from anchorTS + order + optional secret (SHA-256 seed).
+func shuffleBroadcastParticipants(anchorTS string, order []string, secret string) []string {
+	if len(order) == 0 {
+		return nil
 	}
-	if targetTotal < 1 {
-		targetTotal = 10
+	out := make([]string, len(order))
+	copy(out, order)
+	if len(out) <= 1 {
+		return out
 	}
-	if maxRounds < 1 {
-		maxRounds = 6
+	var b strings.Builder
+	b.WriteString(strings.TrimSpace(anchorTS))
+	b.WriteByte(0)
+	b.WriteString(strings.Join(order, ","))
+	b.WriteByte(0)
+	b.WriteString(secret)
+	sum := sha256.Sum256([]byte(b.String()))
+	seed := int64(binary.BigEndian.Uint64(sum[:8]))
+	rng := rand.New(rand.NewSource(seed))
+	for i := len(out) - 1; i > 0; i-- {
+		j := rng.Intn(i + 1)
+		out[i], out[j] = out[j], out[i]
 	}
-	t := float64(targetTotal) / float64(participantCount)
-	low := int(math.Floor(t))
-	high := int(math.Ceil(t))
-	if low < 1 {
-		low = 1
-	}
-	if high < low {
-		high = low
-	}
-	var rounds int
-	if low == high {
-		rounds = low
-		// Integer target (e.g. 4 people × 2 rounds = 8): add light variance toward longer threads.
-		if rand.Float64() < 0.12 && rounds < maxRounds {
-			rounds++
-		} else if rand.Float64() < 0.08 && rounds > 1 {
-			rounds--
-		}
-	} else {
-		p := (t - float64(low)) / float64(high-low)
-		if rand.Float64() < p {
-			rounds = high
-		} else {
-			rounds = low
-		}
-	}
-	if rounds > maxRounds {
-		rounds = maxRounds
-	}
-	if rounds < 1 {
-		rounds = 1
-	}
-	return rounds
+	return out
 }
 
 // broadcastMultiagentTrigger is true for Slack’s channel-wide tokens. Used when no bot is
@@ -254,7 +234,7 @@ func formatPriorSquadTurns(slots []string, slotIndex int, squadMsgs []slack.Mess
 
 // runMultiagentSession coordinates sequential replies on the channel timeline (no thread_ts).
 // messageTS is the triggering message timestamp; squad coordination uses messages posted after it.
-// participants is the ordered squad subset (explicit @mentions) or full MULTIAGENT_ORDER (broadcast).
+// participants is the ordered squad subset (explicit @mentions) or shuffled broadcast order for <!everyone>/<!channel>.
 // handoffProbability is per-reply chance to nudge an @mention of another squad member (0–1).
 func (b *Bot) runMultiagentSession(ctx context.Context, channel, rawText string, messageTS string, participants []string, rounds int, handoffProbability float64) {
 	if !b.cfg.MultiagentConfigured() {
