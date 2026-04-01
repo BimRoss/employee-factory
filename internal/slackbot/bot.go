@@ -302,7 +302,7 @@ func (b *Bot) dispatchMultiagentChannel(ctx context.Context, channel, rawText st
 
 // dispatchBroadcastMultiagent handles @everyone / @channel (Slack <!everyone> / <!channel>) when no bot
 // is @mentioned. Each squad bot receives message.channels and runs the same session: each process only
-// posts when the turn is that bot’s Slack user id (see runMultiagentSession)—so all three must run the
+// posts when the turn is that bot’s Slack user id (see runMultiagentSession)—so every squad bot must run the
 // session, not just MULTIAGENT_ORDER[0].
 func (b *Bot) dispatchBroadcastMultiagent(ctx context.Context, channel, rawText string, messageTS string) bool {
 	if !b.cfg.MultiagentConfigured() {

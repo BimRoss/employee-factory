@@ -5,7 +5,7 @@ set -euo pipefail
 #
 # Secret SECRET_NAME (default employee-factory-<EMPLOYEE_ID>-runtime)
 # Keys: LLM_API_KEY, SLACK_BOT_TOKEN, SLACK_APP_TOKEN; optional LLM_MODEL
-# With EMPLOYEE_ID set, also reads {ID}_CHUTES_KEY and {ID}_SLACK_* (e.g. TIM_CHUTES_KEY).
+# With EMPLOYEE_ID set, also reads {ID}_CHUTES_KEY, {ID}_MODEL, and {ID}_SLACK_* (e.g. GARTH_CHUTES_KEY).
 #
 # Usage:
 #   ./scripts/update-runtime-secrets.sh

@@ -49,7 +49,7 @@ type Config struct {
 	// When unset, multi-agent mode is off and behavior matches single-bot replies.
 	MultiagentEnabled        bool
 	MultiagentBotUserIDs     map[string]string // employee key -> Slack user ID (from MULTIAGENT_BOT_USER_IDS or ROSS_SLACK_BOT_ID / TIM_SLACK_BOT_ID / …)
-	MultiagentOrder          []string          // employee keys, e.g. ross, tim, alex
+	MultiagentOrder          []string          // employee keys, e.g. ross, tim, alex, garth
 	MultiagentPollInterval   int               // milliseconds between Slack polls while waiting
 	MultiagentWaitTimeoutSec int               // max wait for a predecessor to post
 	// MultiagentHandoffProbability: per scheduled multiagent reply, chance (0–1) to nudge @mention handoff vs self-contained.
