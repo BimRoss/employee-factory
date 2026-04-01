@@ -12,6 +12,7 @@ import (
 	"github.com/bimross/employee-factory/internal/llm"
 	"github.com/bimross/employee-factory/internal/persona"
 	"github.com/bimross/employee-factory/internal/router"
+	"github.com/bimross/employee-factory/internal/threadstore"
 	"github.com/slack-go/slack"
 	"github.com/slack-go/slack/slackevents"
 	"github.com/slack-go/slack/socketmode"
@@ -52,19 +53,23 @@ type Bot struct {
 	botUserID string
 	mu        sync.Mutex
 	outbound  *outboundGate
+
+	// threadOwner persists human-root thread owners when Redis is configured (optional cache).
+	threadOwner threadstore.OwnerStore
 }
 
-// New constructs a Socket Mode bot.
-func New(cfg *config.Config, lm *llm.EmployeeLLM, p *persona.Loader) *Bot {
+// New constructs a Socket Mode bot. owner may be nil (human-root owner is inferred from thread history).
+func New(cfg *config.Config, lm *llm.EmployeeLLM, p *persona.Loader, owner threadstore.OwnerStore) *Bot {
 	api := slack.New(cfg.SlackBotToken, slack.OptionAppLevelToken(cfg.SlackAppToken))
 	window := time.Duration(cfg.SlackOutboundWindowSec) * time.Second
 	return &Bot{
-		cfg:      cfg,
-		api:      api,
-		sm:       socketmode.New(api),
-		llm:      lm,
-		persona:  p,
-		outbound: newOutboundGate(window, cfg.SlackOutboundMaxPerWindow),
+		cfg:         cfg,
+		api:         api,
+		sm:          socketmode.New(api),
+		llm:         lm,
+		persona:     p,
+		outbound:    newOutboundGate(window, cfg.SlackOutboundMaxPerWindow),
+		threadOwner: owner,
 	}
 }
 
@@ -150,11 +155,14 @@ func (b *Bot) onMessage(ctx context.Context, ev *slackevents.MessageEvent) {
 		return
 	}
 
-	// BimRoss policy: one open channel (#chat-style), no DMs, no threads—ignore IMs and thread replies.
+	// BimRoss policy: one open channel (#chat-style), no DMs—ignore IMs.
 	if strings.HasPrefix(channel, "D") || ev.ChannelType == "im" || ev.ChannelType == "mpim" {
 		return
 	}
-	if strings.TrimSpace(ev.ThreadTimeStamp) != "" {
+	if ts := strings.TrimSpace(ev.ThreadTimeStamp); ts != "" {
+		if b.cfg.ThreadsEnabled() {
+			b.handleThreadMessage(ctx, channel, ev.User, rawText, ev.TimeStamp, ts)
+		}
 		return
 	}
 
@@ -197,7 +205,13 @@ func (b *Bot) onAppMention(ctx context.Context, ev *slackevents.AppMentionEvent)
 	if channel == "" {
 		return
 	}
-	if strings.HasPrefix(channel, "D") || strings.TrimSpace(ev.ThreadTimeStamp) != "" {
+	if strings.HasPrefix(channel, "D") {
+		return
+	}
+	if ts := strings.TrimSpace(ev.ThreadTimeStamp); ts != "" {
+		if b.cfg.ThreadsEnabled() {
+			b.handleThreadMessage(ctx, channel, ev.User, rawText, ev.TimeStamp, ts)
+		}
 		return
 	}
 	if b.dispatchMultiagentChannel(ctx, channel, rawText, ev.TimeStamp) {
@@ -428,9 +442,85 @@ func (b *Bot) channelHistoryContextBlock(ctx context.Context, channelID, current
 		return ""
 	}
 	out := "Earlier in this channel (oldest first):\n" + strings.Join(lines, "\n")
+	if b.cfg.LLMChannelIncludeThreads {
+		if sn := b.channelThreadSnippetsForMessages(ctx, channelID, msgs); sn != "" {
+			out = out + "\n\n" + sn
+		}
+	}
 	r := []rune(out)
 	if len(r) > b.cfg.LLMThreadMaxRunes {
 		out = "…[truncated; oldest lines dropped]\n" + string(r[len(r)-b.cfg.LLMThreadMaxRunes:])
+	}
+	return out
+}
+
+// channelThreadSnippetsForMessages appends compact thread reply text for recent top-level messages with replies.
+func (b *Bot) channelThreadSnippetsForMessages(ctx context.Context, channelID string, msgsOldestFirst []slack.Message) string {
+	scan := b.cfg.LLMChannelThreadParentScan
+	if scan < 1 {
+		scan = 4
+	}
+	maxR := b.cfg.LLMChannelThreadRepliesMax
+	if maxR < 1 {
+		maxR = 15
+	}
+	var sections []string
+	n := 0
+	for i := len(msgsOldestFirst) - 1; i >= 0 && n < scan; i-- {
+		m := msgsOldestFirst[i]
+		if strings.TrimSpace(m.ThreadTimestamp) != "" {
+			continue
+		}
+		if m.ReplyCount < 1 {
+			continue
+		}
+		n++
+		threadMsgs, err := b.fetchThreadMessages(ctx, channelID, m.Timestamp)
+		if err != nil {
+			log.Printf("channel thread snippet fetch: %v", err)
+			continue
+		}
+		if len(threadMsgs) <= 1 {
+			continue
+		}
+		var sub []string
+		count := 0
+		for _, tm := range threadMsgs {
+			if tm.Timestamp == m.Timestamp {
+				continue
+			}
+			t := strings.TrimSpace(tm.Text)
+			if t == "" {
+				continue
+			}
+			if tm.SubType == "message_changed" || tm.SubType == "message_deleted" {
+				continue
+			}
+			role := "user"
+			if tm.BotID != "" || tm.User == b.botUserID {
+				role = "assistant"
+			} else if sk, ok := squadKeyForSlackUser(b.cfg, tm.User); ok {
+				role = sk
+			}
+			sub = append(sub, fmt.Sprintf("[%s] %s", role, t))
+			count++
+			if count >= maxR {
+				break
+			}
+		}
+		if len(sub) == 0 {
+			continue
+		}
+		sections = append(sections, fmt.Sprintf("Thread under message ts=%s (%d replies): %s", m.Timestamp, m.ReplyCount, strings.Join(sub, " | ")))
+	}
+	if len(sections) == 0 {
+		return ""
+	}
+	out := "Thread snippets (recent parents with replies):\n" + strings.Join(sections, "\n")
+	r := []rune(out)
+	const maxSnip = 6000
+	if len(r) > maxSnip {
+		out = "…[thread snippets truncated]\n" + string(r[len(r)-maxSnip:])
 	}
 	return out
 }

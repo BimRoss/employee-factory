@@ -63,6 +63,17 @@ type Config struct {
 	MultiagentBroadcastMaxRounds int
 	// MultiagentSquadRunMax: max squad-bot messages in the current run (after last non-squad user); 0 = no cap.
 	MultiagentSquadRunMax int
+
+	// Threaded #chat (CEO-only): Socket Mode already receives thread replies; no extra webhooks.
+	// ThreadsEnabled when ChatAllowedUserID and SlackChatChannelID are both non-empty.
+	ChatAllowedUserID  string // Slack user id of the only human who may drive thread sessions
+	SlackChatChannelID string // e.g. C01234567 — thread routing only in this channel
+	RedisURL           string // for persisting thread owner on human-root threads; optional but required for that case
+	ThreadOwnerTTLSec  int    // Redis TTL for owner key (default 30d)
+
+	LLMChannelIncludeThreads   bool // enrich main-channel context with recent thread reply snippets
+	LLMChannelThreadParentScan int  // how many recent top-level messages to scan for reply_count (default 4)
+	LLMChannelThreadRepliesMax int  // max replies pulled per parent thread (default 15)
 }
 
 // Load reads environment variables. Canonical keys (LLM_*, SLACK_*) take precedence;
@@ -93,18 +104,25 @@ func Load() (*Config, error) {
 		LLMAPIKey:         strings.TrimSpace(firstNonEmpty(os.Getenv("LLM_API_KEY"), employeePrefixed(empID, "CHUTES_KEY"), os.Getenv("ALEX_CHUTES_KEY"))),
 		LLMSystemMaxRunes: parseIntEnvSigned("LLM_SYSTEM_MAX_RUNES", 48000),
 		// Default ceiling avoids mid-sentence cutoffs; brevity comes from the Slack system suffix, not a tiny cap.
-		LLMMaxTokens:              parseIntEnvMin("LLM_MAX_TOKENS", 512, 1),
-		LLMTemperature:            parseFloat32Env("LLM_TEMPERATURE", 0.55),
-		LLMTopP:                   parseOptionalFloat32("LLM_TOP_P"),
-		LLMThreadMaxMessages:      parseIntEnvMin("LLM_THREAD_MAX_MESSAGES", 25, 1),
-		LLMThreadMaxRunes:         parseIntEnvMin("LLM_THREAD_MAX_RUNES", 16000, 256),
-		LLMAlexHints:              parseBoolEnv("LLM_ALEX_HINTS", true),
-		SlackOutboundWindowSec:    parseIntEnvMin("SLACK_OUTBOUND_WINDOW_SEC", 60, 1),
-		SlackOutboundMaxPerWindow: parseIntEnvDefaultOrZero("SLACK_OUTBOUND_MAX_PER_WINDOW", 10),
-		SlackBotToken:             strings.TrimSpace(firstNonEmpty(os.Getenv("SLACK_BOT_TOKEN"), employeePrefixed(empID, "SLACK_BOT_TOKEN"), os.Getenv("ALEX_SLACK_BOT_TOKEN"))),
-		SlackAppToken:             strings.TrimSpace(firstNonEmpty(os.Getenv("SLACK_APP_TOKEN"), employeePrefixed(empID, "SLACK_APP_TOKEN"), os.Getenv("ALEX_SLACK_APP_TOKEN"))),
-		PersonaPath:               getEnv("PERSONA_PATH", "/config/persona.md"),
-		PersonaReloadMS:           parseIntEnv("PERSONA_RELOAD_MS", 60000),
+		LLMMaxTokens:               parseIntEnvMin("LLM_MAX_TOKENS", 512, 1),
+		LLMTemperature:             parseFloat32Env("LLM_TEMPERATURE", 0.55),
+		LLMTopP:                    parseOptionalFloat32("LLM_TOP_P"),
+		LLMThreadMaxMessages:       parseIntEnvMin("LLM_THREAD_MAX_MESSAGES", 25, 1),
+		LLMThreadMaxRunes:          parseIntEnvMin("LLM_THREAD_MAX_RUNES", 16000, 256),
+		LLMAlexHints:               parseBoolEnv("LLM_ALEX_HINTS", true),
+		SlackOutboundWindowSec:     parseIntEnvMin("SLACK_OUTBOUND_WINDOW_SEC", 60, 1),
+		SlackOutboundMaxPerWindow:  parseIntEnvDefaultOrZero("SLACK_OUTBOUND_MAX_PER_WINDOW", 10),
+		SlackBotToken:              strings.TrimSpace(firstNonEmpty(os.Getenv("SLACK_BOT_TOKEN"), employeePrefixed(empID, "SLACK_BOT_TOKEN"), os.Getenv("ALEX_SLACK_BOT_TOKEN"))),
+		SlackAppToken:              strings.TrimSpace(firstNonEmpty(os.Getenv("SLACK_APP_TOKEN"), employeePrefixed(empID, "SLACK_APP_TOKEN"), os.Getenv("ALEX_SLACK_APP_TOKEN"))),
+		PersonaPath:                getEnv("PERSONA_PATH", "/config/persona.md"),
+		PersonaReloadMS:            parseIntEnv("PERSONA_RELOAD_MS", 60000),
+		ChatAllowedUserID:          strings.TrimSpace(os.Getenv("CHAT_ALLOWED_USER_ID")),
+		SlackChatChannelID:         strings.TrimSpace(os.Getenv("SLACK_CHAT_CHANNEL_ID")),
+		RedisURL:                   strings.TrimSpace(os.Getenv("REDIS_URL")),
+		ThreadOwnerTTLSec:          parseIntEnvMin("THREAD_OWNER_TTL_SEC", 30*24*3600, 60),
+		LLMChannelIncludeThreads:   parseBoolEnv("LLM_CHANNEL_INCLUDE_THREADS", false),
+		LLMChannelThreadParentScan: parseIntEnvMin("LLM_CHANNEL_THREAD_PARENT_SCAN", 4, 1),
+		LLMChannelThreadRepliesMax: parseIntEnvMin("LLM_CHANNEL_THREAD_REPLIES_MAX", 15, 1),
 	}
 
 	if err := parseMultiagentEnv(cfg); err != nil {
@@ -131,6 +149,14 @@ func Load() (*Config, error) {
 	}
 
 	return cfg, nil
+}
+
+// ThreadsEnabled is true when CEO + channel allowlist are set so thread routing runs.
+func (c *Config) ThreadsEnabled() bool {
+	if c == nil {
+		return false
+	}
+	return c.ChatAllowedUserID != "" && c.SlackChatChannelID != ""
 }
 
 // MultiagentConfigured reports whether multi-agent sequencing can activate (squad map + order present and enabled).

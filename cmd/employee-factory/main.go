@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 	"github.com/bimross/employee-factory/internal/llm"
 	"github.com/bimross/employee-factory/internal/persona"
 	"github.com/bimross/employee-factory/internal/slackbot"
+	"github.com/bimross/employee-factory/internal/threadstore"
 	"github.com/joho/godotenv"
 )
 
@@ -31,7 +33,18 @@ func main() {
 	pl.StartBackgroundReload()
 
 	lm := llm.New(cfg)
-	bot := slackbot.New(cfg, lm, pl)
+
+	var owner threadstore.OwnerStore = threadstore.Noop{}
+	if u := strings.TrimSpace(cfg.RedisURL); u != "" {
+		r, err := threadstore.NewRedis(u)
+		if err != nil {
+			log.Fatalf("redis: %v", err)
+		}
+		defer func() { _ = r.Close() }()
+		owner = r
+	}
+
+	bot := slackbot.New(cfg, lm, pl, owner)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
