@@ -5,7 +5,7 @@ set -euo pipefail
 # Direction: local .env → cluster Secret only. Does not read the cluster or modify .env.
 #
 # Secret SECRET_NAME (default employee-factory-<EMPLOYEE_ID>-runtime)
-# Keys: LLM_API_KEY, SLACK_BOT_TOKEN, SLACK_APP_TOKEN; optional LLM_MODEL
+# Keys: LLM_API_KEY, SLACK_BOT_TOKEN, SLACK_APP_TOKEN; optional SLACK_USER_TOKEN, MULTIAGENT_BOT_USER_IDS, and LLM_MODEL
 # With EMPLOYEE_ID set, also reads {ID}_CHUTES_KEY, {ID}_MODEL, and {ID}_SLACK_* (e.g. GARTH_CHUTES_KEY).
 #
 # Usage:
@@ -13,12 +13,78 @@ set -euo pipefail
 #   EMPLOYEE_ID=tim ./scripts/update-runtime-secrets.sh
 #   ENV_FILE=/path/.env NAMESPACE=employee-factory ./scripts/update-runtime-secrets.sh
 #
-# Kubeconfig: if KUBECONFIG is unset, defaults to ~/.kube/config/grant-admin.yaml when present.
+# Kubeconfig: if KUBECONFIG is unset, defaults to ~/.kube/config/admin.yaml when present.
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
+resolve_bot_user_id() {
+  local token="$1"
+  if [[ -z "${token}" ]]; then
+    return 1
+  fi
+  python3 - "${token}" <<'PY'
+import json
+import sys
+import urllib.request
+
+token = sys.argv[1]
+req = urllib.request.Request(
+    "https://slack.com/api/auth.test",
+    method="POST",
+    headers={"Authorization": f"Bearer {token}"},
+)
+try:
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        payload = json.loads(resp.read().decode())
+except Exception:
+    sys.exit(1)
+
+if not payload.get("ok"):
+    sys.exit(1)
+
+uid = (payload.get("user_id") or "").strip()
+if not uid:
+    sys.exit(1)
+
+print(uid)
+PY
+}
+
+build_multiagent_bot_user_ids() {
+  local order_raw="${MULTIAGENT_ORDER:-ross,tim,alex,garth}"
+  local -a pairs=()
+  local part key token_var token user_id
+
+  IFS=',' read -r -a _order <<< "${order_raw}"
+  for part in "${_order[@]}"; do
+    key="$(echo "${part}" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')"
+    if [[ -z "${key}" ]]; then
+      continue
+    fi
+    token_var="$(echo "${key}" | tr '[:lower:]-' '[:upper:]_')_SLACK_BOT_TOKEN"
+    token="${!token_var:-}"
+    if [[ -z "${token}" ]]; then
+      echo "warning: cannot auto-resolve ${key} bot id; missing ${token_var}" >&2
+      return 1
+    fi
+    if ! user_id="$(resolve_bot_user_id "${token}")"; then
+      echo "warning: cannot auto-resolve ${key} bot id from ${token_var}" >&2
+      return 1
+    fi
+    pairs+=("${key}:${user_id}")
+  done
+
+  if [[ "${#pairs[@]}" -eq 0 ]]; then
+    return 1
+  fi
+
+  local joined
+  joined="$(IFS=,; echo "${pairs[*]}")"
+  echo "${joined}"
+}
+
 if [[ -z "${KUBECONFIG:-}" ]]; then
-  _bimross_kube="${HOME}/.kube/config/grant-admin.yaml"
+  _bimross_kube="${HOME}/.kube/config/admin.yaml"
   if [[ -f "${_bimross_kube}" ]]; then
     export KUBECONFIG="${_bimross_kube}"
   fi
@@ -65,6 +131,7 @@ EMP_PREFIX="$(echo "${EMPLOYEE_ID}" | tr '[:lower:]-' '[:upper:]_')"
 CHUTES_VAR="${EMP_PREFIX}_CHUTES_KEY"
 BOT_VAR="${EMP_PREFIX}_SLACK_BOT_TOKEN"
 APP_VAR="${EMP_PREFIX}_SLACK_APP_TOKEN"
+USER_VAR="${EMP_PREFIX}_SLACK_USER_TOKEN"
 
 LLM_KEY="${LLM_API_KEY:-}"
 if [[ -z "${LLM_KEY}" ]]; then
@@ -90,6 +157,14 @@ if [[ -z "${APP}" && "${EMPLOYEE_ID}" == "alex" ]]; then
   APP="${ALEX_SLACK_APP_TOKEN:-}"
 fi
 
+USER="${SLACK_USER_TOKEN:-}"
+if [[ -z "${USER}" ]]; then
+  USER="${!USER_VAR:-}"
+fi
+if [[ -z "${USER}" && "${EMPLOYEE_ID}" == "alex" ]]; then
+  USER="${ALEX_SLACK_USER_TOKEN:-}"
+fi
+
 if [[ -z "${LLM_KEY}" || -z "${BOT}" || -z "${APP}" ]]; then
   echo "need LLM_API_KEY or ${EMP_PREFIX}_CHUTES_KEY, and Slack tokens (${EMP_PREFIX}_SLACK_* or SLACK_*)" >&2
   exit 1
@@ -109,6 +184,17 @@ secret_args=(
 )
 if [[ -n "${MODEL_VAL}" ]]; then
   secret_args+=(--from-literal=LLM_MODEL="${MODEL_VAL}")
+fi
+if [[ -n "${USER}" ]]; then
+  secret_args+=(--from-literal=SLACK_USER_TOKEN="${USER}")
+fi
+
+MULTIAGENT_IDS="${MULTIAGENT_BOT_USER_IDS:-}"
+if [[ -z "${MULTIAGENT_IDS}" ]]; then
+  MULTIAGENT_IDS="$(build_multiagent_bot_user_ids || true)"
+fi
+if [[ -n "${MULTIAGENT_IDS}" ]]; then
+  secret_args+=(--from-literal=MULTIAGENT_BOT_USER_IDS="${MULTIAGENT_IDS}")
 fi
 
 kubectl create secret generic "${SECRET_NAME}" \
