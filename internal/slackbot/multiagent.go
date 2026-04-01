@@ -232,6 +232,45 @@ func formatPriorSquadTurns(slots []string, slotIndex int, squadMsgs []slack.Mess
 	return out
 }
 
+func roleLaneForKey(key string) string {
+	switch strings.ToLower(strings.TrimSpace(key)) {
+	case "ross":
+		return "Execution and technical risk (infra, implementation constraints, rollout reality)."
+	case "alex":
+		return "GTM and revenue (offer, distribution, pricing, conversion)."
+	case "tim":
+		return "Decision quality (tradeoffs, assumptions, low-risk experiments)."
+	case "garth":
+		return "Synthesis and checklisting (concise recap, owner, next action)."
+	default:
+		return "Add one distinct, non-duplicative angle tied to this user's decision."
+	}
+}
+
+func buildMultiagentTurnPolicy(selfKey string, slotIndex int, totalSlots int) string {
+	selfKey = strings.ToLower(strings.TrimSpace(selfKey))
+	if selfKey == "" || totalSlots < 2 {
+		return ""
+	}
+	lane := roleLaneForKey(selfKey)
+	closer := slotIndex == totalSlots-1
+	var b strings.Builder
+	b.WriteString("Multi-agent turn policy (must follow):\n")
+	b.WriteString("- Your lane: ")
+	b.WriteString(lane)
+	b.WriteString("\n")
+	b.WriteString("- Novelty guard: do not restate prior bot lines; add exactly one new angle (risk, metric, tradeoff, or next step).\n")
+	b.WriteString("- Brevity guard: max 2 short lines.\n")
+	if closer {
+		b.WriteString("- You are the closer for this turn: provide the final merged recommendation in one clear move.\n")
+		b.WriteString("- Do not ask another bot for a handoff in this closing message.\n")
+	} else {
+		b.WriteString("- You are not the closer: do not provide the final answer or full recap.\n")
+		b.WriteString("- End with one sharp question or handoff cue only if needed.\n")
+	}
+	return b.String()
+}
+
 // runMultiagentSession coordinates sequential replies on the channel timeline (no thread_ts).
 // messageTS is the triggering message timestamp; squad coordination uses messages posted after it.
 // participants is the ordered squad subset (explicit @mentions) or shuffled broadcast order for <!everyone>.
@@ -295,13 +334,22 @@ func (b *Bot) runMultiagentSession(ctx context.Context, channel, rawText string,
 		if prior != "" {
 			userPayload = prior + "\n\n" + userQuestion
 		}
+		selfKey := idToKey[b.botUserID]
+		if policy := buildMultiagentTurnPolicy(selfKey, k, len(slots)); policy != "" {
+			userPayload = policy + "\n\n" + userPayload
+		}
 		if b.useAlexHints() && b.cfg.LLMAlexHints {
 			userPayload = router.WrapAlexUserMessage(userPayload)
 		}
 
 		log.Printf("multiagent: generating employee=%s slot=%d user_payload_runes=%d (includes prior squad context when slot>0)",
 			b.cfg.EmployeeID, k, utf8.RuneCountInString(userPayload))
-		b.postMultiagentReply(ctx, channel, userPayload, handoffProbability)
+		slotHandoffProbability := handoffProbability
+		if k == len(slots)-1 {
+			// Single closer: keep the final message self-contained to reduce ping-pong loops.
+			slotHandoffProbability = 0
+		}
+		b.postMultiagentReply(ctx, channel, userPayload, slotHandoffProbability)
 	}
 }
 

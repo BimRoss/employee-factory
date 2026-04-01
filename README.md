@@ -17,6 +17,15 @@ For `@everyone` triggers (no individual bot `@mention`), each squad pod receives
 - **`MULTIAGENT_BROADCAST_ROUNDS`** (default `1`) is how many full passes over that shuffled order to run per trigger (`1` ⇒ each agent replies once).
 - **`MULTIAGENT_BROADCAST_HANDOFF_PROBABILITY`** (default `0.5`) controls per-reply chance to include exactly one other-agent `@mention`, which creates organic follow-on turns without hardcoding message counts.
 
+### Turn quality policy (runtime-enforced prompt block)
+
+During multi-agent sessions, each slot now receives an explicit policy block before LLM generation:
+
+- **Role lanes** are reinforced per employee (`ross` execution/risk, `alex` GTM/revenue, `tim` tradeoffs/experiments, `garth` synthesis/checklists).
+- **Novelty guard**: each agent is instructed to add one *new* angle instead of repeating previous bot lines.
+- **Single closer pattern**: non-final slots are instructed not to provide the final merged answer; the final slot is instructed to provide the closing recommendation.
+- **Close without ping-pong**: final slot suppresses handoff mentions by forcing handoff probability to `0` for that slot only.
+
 ## Deploying to the admin cluster (Fleet)
 
 Phase 1 adds only ConfigMap keys; runtime Secrets stay the same.
