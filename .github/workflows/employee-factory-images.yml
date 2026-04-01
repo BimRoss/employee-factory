@@ -16,6 +16,10 @@ on:
       - master
   workflow_dispatch:
 
+env:
+  # GitHub Actions JS runtime migration: opt into Node 24 before it becomes default.
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   employee-factory:
     runs-on: ubuntu-latest
