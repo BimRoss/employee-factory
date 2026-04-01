@@ -95,11 +95,11 @@ func shuffleBroadcastParticipants(anchorTS string, order []string, secret string
 	return out
 }
 
-// broadcastMultiagentTrigger is true for Slack’s channel-wide tokens. Used when no bot is
-// @mentioned — each squad bot starts runMultiagentSession; each posts only its own slots.
+// broadcastMultiagentTrigger is true only for Slack <!everyone>.
+// Used when no bot is @mentioned — each squad bot starts runMultiagentSession; each posts only its own slots.
 func broadcastMultiagentTrigger(rawText string) bool {
 	lower := strings.ToLower(rawText)
-	return strings.Contains(lower, "<!everyone") || strings.Contains(lower, "<!channel")
+	return strings.Contains(lower, "<!everyone")
 }
 
 // buildSlots repeats ordered participant keys for each round; returns Slack user IDs per slot.
@@ -234,7 +234,7 @@ func formatPriorSquadTurns(slots []string, slotIndex int, squadMsgs []slack.Mess
 
 // runMultiagentSession coordinates sequential replies on the channel timeline (no thread_ts).
 // messageTS is the triggering message timestamp; squad coordination uses messages posted after it.
-// participants is the ordered squad subset (explicit @mentions) or shuffled broadcast order for <!everyone>/<!channel>.
+// participants is the ordered squad subset (explicit @mentions) or shuffled broadcast order for <!everyone>.
 // handoffProbability is per-reply chance to nudge an @mention of another squad member (0–1).
 func (b *Bot) runMultiagentSession(ctx context.Context, channel, rawText string, messageTS string, participants []string, rounds int, handoffProbability float64) {
 	if !b.cfg.MultiagentConfigured() {
@@ -382,9 +382,11 @@ func (b *Bot) postMultiagentReply(ctx context.Context, channel, userPayload stri
 	}
 
 	suffix := slackReplySuffix
+	handoff := false
 	if b.cfg.MultiagentConfigured() {
 		p := handoffProbability
-		if rand.Float64() < p {
+		handoff = rand.Float64() < p
+		if handoff {
 			suffix += "\n\nHand-off cue for this turn: include one @mention of another squad member—not yourself (@ross/@tim/@alex/@garth) with a concrete question or next step."
 		} else {
 			suffix += "\n\nHand-off cue for this turn: keep this reply self-contained; do not @mention squad members unless strictly necessary."
@@ -409,7 +411,9 @@ func (b *Bot) postMultiagentReply(ctx context.Context, channel, userPayload stri
 		reply = "…"
 	}
 
-	reply = formatOutgoingSlackMessage(reply, b.cfg, b.botUserID)
+	reply = normalizeSlackReply(reply, b.cfg, b.botUserID)
+	reply = enforceMultiagentMentionPolicy(reply, b.cfg, b.botUserID, handoff)
+	reply = normalizeSlackReply(reply, b.cfg, b.botUserID)
 	opts := []slack.MsgOption{slack.MsgOptionText(reply, false)}
 	_, _, err = b.api.PostMessageContext(ctx, channel, opts...)
 	if err != nil {

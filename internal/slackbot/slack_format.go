@@ -1,9 +1,11 @@
 package slackbot
 
 import (
+	"hash/fnv"
 	"regexp"
 	"sort"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/bimross/employee-factory/internal/config"
 )
@@ -15,7 +17,18 @@ var (
 	reGitHubBold    = regexp.MustCompile(`\*\*([^*\n]+)\*\*`)
 	reMDHeading     = regexp.MustCompile(`(?m)^#{1,6}\s+`)
 	reBracketLinkMD = regexp.MustCompile(`\[([^\]]+)\]\([^)]+\)`)
+	reSlackMention  = regexp.MustCompile(`<@(U[A-Za-z0-9]+)(?:\|[^>]+)?>`)
 )
+
+const (
+	slackReplyMaxLines = 2
+	slackReplyMaxRunes = 240
+)
+
+type squadMember struct {
+	key string
+	uid string
+}
 
 // formatOutgoingSlackMessage normalizes common LLM Markdown habits so Slack renders cleanly.
 // Product intent: keep expressive Slack-native mrkdwn (bold, code, quotes)—not “plain ASCII only.”
@@ -34,6 +47,50 @@ func formatOutgoingSlackMessage(s string, cfg *config.Config, selfSlackUserID st
 	s = substituteSquadAtMentions(s, cfg)
 	s = stripOutgoingSelfMentions(s, cfg, selfSlackUserID)
 	return strings.TrimSpace(s)
+}
+
+// normalizeSlackReply applies Slack formatting fixes plus a strict short-form cap.
+func normalizeSlackReply(s string, cfg *config.Config, selfSlackUserID string) string {
+	s = formatOutgoingSlackMessage(s, cfg, selfSlackUserID)
+	s = capSlackReplyLength(s, slackReplyMaxLines, slackReplyMaxRunes)
+	return strings.TrimSpace(s)
+}
+
+func capSlackReplyLength(s string, maxLines int, maxRunes int) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return s
+	}
+	if maxLines < 1 {
+		maxLines = 1
+	}
+	if maxRunes < 8 {
+		maxRunes = 8
+	}
+	rawLines := strings.Split(s, "\n")
+	lines := make([]string, 0, len(rawLines))
+	for _, line := range rawLines {
+		t := strings.TrimSpace(line)
+		if t == "" {
+			continue
+		}
+		lines = append(lines, reCollapseSpaces.ReplaceAllString(t, " "))
+	}
+	if len(lines) == 0 {
+		return ""
+	}
+	if len(lines) > maxLines {
+		lines = lines[:maxLines]
+	}
+	out := strings.Join(lines, "\n")
+	if utf8.RuneCountInString(out) <= maxRunes {
+		return out
+	}
+	r := []rune(out)
+	if maxRunes <= 3 {
+		return string(r[:maxRunes])
+	}
+	return strings.TrimSpace(string(r[:maxRunes-3])) + "..."
 }
 
 func convertGitHubBoldToSlack(s string) string {
@@ -86,6 +143,99 @@ func substituteSquadAtMentions(s string, cfg *config.Config) string {
 }
 
 var reCollapseSpaces = regexp.MustCompile(`[ \t]{2,}`)
+
+// enforceMultiagentMentionPolicy keeps cross-agent loops organic while bounded:
+// requireHandoff=true  => exactly one other-agent mention in final text.
+// requireHandoff=false => no squad mentions in final text.
+func enforceMultiagentMentionPolicy(s string, cfg *config.Config, selfSlackUserID string, requireHandoff bool) string {
+	if cfg == nil || len(cfg.MultiagentBotUserIDs) == 0 {
+		return strings.TrimSpace(s)
+	}
+	selfKey := strings.ToLower(strings.TrimSpace(cfg.EmployeeID))
+	selfID := strings.TrimSpace(selfSlackUserID)
+	if selfID == "" && selfKey != "" {
+		selfID = strings.TrimSpace(cfg.MultiagentBotUserIDs[selfKey])
+	}
+
+	var members []squadMember
+	for k, uid := range cfg.MultiagentBotUserIDs {
+		key := strings.ToLower(strings.TrimSpace(k))
+		uid = strings.TrimSpace(uid)
+		if key == "" || uid == "" {
+			continue
+		}
+		if key == selfKey || (selfID != "" && uid == selfID) {
+			continue
+		}
+		members = append(members, squadMember{key: key, uid: uid})
+	}
+	if len(members) == 0 {
+		return strings.TrimSpace(s)
+	}
+	sort.Slice(members, func(i, j int) bool { return members[i].key < members[j].key })
+
+	keepUID := ""
+	if requireHandoff {
+		matches := reSlackMention.FindAllStringSubmatch(s, -1)
+		valid := make(map[string]bool, len(members))
+		for _, m := range members {
+			valid[m.uid] = true
+		}
+		for _, m := range matches {
+			if len(m) < 2 {
+				continue
+			}
+			uid := strings.TrimSpace(m[1])
+			if valid[uid] {
+				keepUID = uid
+				break
+			}
+		}
+	}
+
+	out := s
+	for _, m := range members {
+		reTok := regexp.MustCompile(`<@` + regexp.QuoteMeta(m.uid) + `(?:\|[^>]+)?>`)
+		out = reTok.ReplaceAllString(out, "")
+		rePlain := regexp.MustCompile(`(?i)@` + regexp.QuoteMeta(m.key) + `\b`)
+		out = rePlain.ReplaceAllString(out, "")
+	}
+	out = reCollapseSpaces.ReplaceAllString(out, " ")
+	out = strings.ReplaceAll(out, " ,", ",")
+	out = strings.ReplaceAll(out, " .", ".")
+	out = strings.ReplaceAll(out, " ?", "?")
+	out = strings.ReplaceAll(out, " !", "!")
+	out = strings.TrimSpace(out)
+
+	if !requireHandoff {
+		if out == "" {
+			return "..."
+		}
+		return out
+	}
+
+	if keepUID == "" {
+		keepUID = pickMentionUID(members, out)
+	}
+	mention := "<@" + keepUID + ">"
+	if out == "" {
+		return mention + " quick take?"
+	}
+	if strings.HasSuffix(out, "?") {
+		return out + " " + mention
+	}
+	return out + " " + mention + " quick take?"
+}
+
+func pickMentionUID(members []squadMember, seed string) string {
+	if len(members) == 0 {
+		return ""
+	}
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(seed))
+	idx := int(h.Sum32() % uint32(len(members)))
+	return members[idx].uid
+}
 
 // stripOutgoingSelfMentions removes pings to this bot: plain @employee_id and Slack tokens <@U…> (optional |label).
 func stripOutgoingSelfMentions(s string, cfg *config.Config, selfSlackUserID string) string {

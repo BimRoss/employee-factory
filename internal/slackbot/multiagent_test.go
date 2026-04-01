@@ -142,8 +142,8 @@ func TestBroadcastMultiagentTrigger(t *testing.T) {
 	if !broadcastMultiagentTrigger("<!everyone> hi") {
 		t.Fatal("everyone token")
 	}
-	if !broadcastMultiagentTrigger("x <!channel|@channel> y") {
-		t.Fatal("channel token")
+	if broadcastMultiagentTrigger("x <!channel|@channel> y") {
+		t.Fatal("channel token should not trigger broadcast")
 	}
 	if broadcastMultiagentTrigger("Hey everyone") {
 		t.Fatal("plain everyone text does not start broadcast (only coordinator + Slack tokens)")

@@ -32,7 +32,7 @@ Company name: BimRoss (capital B, capital R). Never write BenRoss, Ben Ross, BIM
 
 Substance: When the persona defines frameworks, facts, or priorities, treat that text as authoritative—but do not dump every framework as a sectioned essay. Apply judgment: one sharp take beats a catalog.
 
-Succinctness and tokens: Every word costs latency and money. Default: two to four short lines total (about half a mobile screen). Lead with the answer. If the question is prioritization (“what next,” “what should we work on,” “best move”), give one concrete pick on the first line—optionally one short supporting line. Do not produce five themed sections, pillar lists, or “1–5” breakdowns unless the user explicitly asks for that format. Expand only when they ask for depth, steps, or a deliberate list.
+Succinctness and tokens: Every word costs latency and money. Default: one to two short lines total. Lead with the answer. If the question is prioritization (“what next,” “what should we work on,” “best move”), give one concrete pick on the first line and one short support line at most. Do not produce themed sections, pillar lists, or long “1–N” breakdowns unless the user explicitly asks for that format. Expand only when they ask for depth, steps, or a deliberate list.
 
 Channel: You are in a shared channel—make the reply scannable in seconds.
 
@@ -186,7 +186,7 @@ func (b *Bot) onMessage(ctx context.Context, ev *slackevents.MessageEvent) {
 		b.postLLMReply(ctx, channel, text, ev.TimeStamp)
 		return
 	}
-	// message.channels: @everyone / @channel without bot @mentions; each bot runs the same session with a
+	// message.channels: @everyone without bot @mentions; each bot runs the same session with a
 	// SHA-256–seeded random turn order (see shuffleBroadcastParticipants) and MULTIAGENT_BROADCAST_ROUNDS passes.
 	if b.dispatchBroadcastMultiagent(ctx, channel, rawText, ev.TimeStamp) {
 		return
@@ -314,7 +314,7 @@ func (b *Bot) dispatchMultiagentChannel(ctx context.Context, channel, rawText st
 	return true
 }
 
-// dispatchBroadcastMultiagent handles @everyone / @channel (Slack <!everyone> / <!channel>) when no bot
+// dispatchBroadcastMultiagent handles @everyone (Slack <!everyone>) when no bot
 // is @mentioned. Each squad bot receives message.channels and runs the same session: each process only
 // posts when the turn is that bot’s Slack user id (see runMultiagentSession)—so every squad bot must run the
 // session, not just MULTIAGENT_ORDER[0].
@@ -382,7 +382,7 @@ func (b *Bot) postLLMReply(ctx context.Context, channel, userText, messageTS str
 		reply = "…"
 	}
 
-	reply = formatOutgoingSlackMessage(reply, b.cfg, b.botUserID)
+	reply = normalizeSlackReply(reply, b.cfg, b.botUserID)
 	opts := []slack.MsgOption{slack.MsgOptionText(reply, false)}
 	_, _, err = b.api.PostMessageContext(ctx, channel, opts...)
 	if err != nil {

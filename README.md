@@ -8,13 +8,14 @@ The repo is the source of truth for behavior—read the code and `.env.example` 
 
 Chat completions retry on transient provider errors (`429`, `502`, `503`, and Chutes “no instances available”) with exponential backoff, then optionally try `LLM_FALLBACK_MODEL` on the same `LLM_BASE_URL` and API key (typically a smaller model). Configure via `LLM_MAX_RETRIES`, `LLM_RETRY_BACKOFF_MS`, and `LLM_FALLBACK_MODEL` (see `.env.example`). No extra secrets.
 
-## Multi-agent Slack (`<!everyone>` / `<!channel>`)
+## Multi-agent Slack (`<!everyone>`)
 
-For channel-wide triggers (no individual bot `@mention`), each squad pod receives the same Events API message and runs a shared **multi-agent session**:
+For `@everyone` triggers (no individual bot `@mention`), each squad pod receives the same Events API message and runs a shared **multi-agent session**:
 
 - **Turn order** is a **pseudorandom permutation** of `MULTIAGENT_ORDER`, deterministic per trigger from `SHA-256(anchor message timestamp + NUL + comma-joined order + NUL + optional secret)`. Every pod must use the same `MULTIAGENT_ORDER` and the same optional `MULTIAGENT_SHUFFLE_SECRET` so they agree on who posts first, second, etc.
 - **Coordination** is **not** Redis: each bot polls `conversations.history` until prior squad messages match the expected slot prefix, then calls the LLM and posts (same as before).
-- **`MULTIAGENT_BROADCAST_ROUNDS`** (default `1`) is how many full passes over that shuffled order to run per trigger (`1` ⇒ each agent replies once). Raise it for longer “jam” threads.
+- **`MULTIAGENT_BROADCAST_ROUNDS`** (default `1`) is how many full passes over that shuffled order to run per trigger (`1` ⇒ each agent replies once).
+- **`MULTIAGENT_BROADCAST_HANDOFF_PROBABILITY`** (default `0.5`) controls per-reply chance to include exactly one other-agent `@mention`, which creates organic follow-on turns without hardcoding message counts.
 
 ## Deploying to the admin cluster (Fleet)
 

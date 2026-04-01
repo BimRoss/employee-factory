@@ -84,3 +84,57 @@ func TestFormatOutgoingSlackMessage_stripsSelfMention(t *testing.T) {
 		t.Fatalf("expected other squad mention preserved, got %q", out)
 	}
 }
+
+func TestNormalizeSlackReply_capsLength(t *testing.T) {
+	cfg := &config.Config{}
+	in := "Line one with useful content.\nLine two with details.\nLine three should be dropped.\nLine four too."
+	out := normalizeSlackReply(in, cfg, "")
+	lines := strings.Split(out, "\n")
+	if len(lines) > 2 {
+		t.Fatalf("expected <=2 lines, got %d: %q", len(lines), out)
+	}
+	if strings.Contains(out, "Line three") {
+		t.Fatalf("expected overflow lines dropped, got %q", out)
+	}
+}
+
+func TestEnforceMultiagentMentionPolicy_requireHandoff(t *testing.T) {
+	cfg := &config.Config{
+		EmployeeID: "ross",
+		MultiagentBotUserIDs: map[string]string{
+			"ross":  "U0APX108QE7",
+			"tim":   "U0AQ10R2H8E",
+			"alex":  "U0APSMH05B5",
+			"garth": "UGARTH0001",
+		},
+	}
+	in := "Keep this scoped and fast."
+	out := enforceMultiagentMentionPolicy(in, cfg, "U0APX108QE7", true)
+	matches := reSlackMention.FindAllStringSubmatch(out, -1)
+	if len(matches) != 1 {
+		t.Fatalf("expected exactly one mention, got %d: %q", len(matches), out)
+	}
+	if matches[0][1] == "U0APX108QE7" {
+		t.Fatalf("should not mention self: %q", out)
+	}
+}
+
+func TestEnforceMultiagentMentionPolicy_noHandoff(t *testing.T) {
+	cfg := &config.Config{
+		EmployeeID: "tim",
+		MultiagentBotUserIDs: map[string]string{
+			"ross":  "U0APX108QE7",
+			"tim":   "U0AQ10R2H8E",
+			"alex":  "U0APSMH05B5",
+			"garth": "UGARTH0001",
+		},
+	}
+	in := "Loop back with @ross and @alex, maybe <@UGARTH0001> too."
+	out := enforceMultiagentMentionPolicy(in, cfg, "U0AQ10R2H8E", false)
+	if strings.Contains(out, "<@U0APX108QE7>") || strings.Contains(out, "<@U0APSMH05B5>") || strings.Contains(out, "<@UGARTH0001>") {
+		t.Fatalf("expected squad mentions removed, got %q", out)
+	}
+	if strings.Contains(strings.ToLower(out), "@ross") || strings.Contains(strings.ToLower(out), "@alex") || strings.Contains(strings.ToLower(out), "@garth") {
+		t.Fatalf("expected plain squad mentions removed, got %q", out)
+	}
+}

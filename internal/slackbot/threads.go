@@ -280,7 +280,7 @@ func (b *Bot) postLLMReplyInThread(ctx context.Context, channel, userText, messa
 	if reply == "" {
 		reply = "…"
 	}
-	reply = formatOutgoingSlackMessage(reply, b.cfg, b.botUserID)
+	reply = normalizeSlackReply(reply, b.cfg, b.botUserID)
 	opts := []slack.MsgOption{
 		slack.MsgOptionText(reply, false),
 		slack.MsgOptionTS(threadTS),
