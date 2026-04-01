@@ -49,14 +49,15 @@ func TestFormatOutgoingSlackMessage_link(t *testing.T) {
 func TestFormatOutgoingSlackMessage_squadMentions(t *testing.T) {
 	cfg := &config.Config{
 		MultiagentBotUserIDs: map[string]string{
-			"ross": "U0APX108QE7",
-			"tim":  "U0AQ10R2H8E",
-			"alex": "U0APSMH05B5",
+			"ross":  "U0APX108QE7",
+			"tim":   "U0AQ10R2H8E",
+			"alex":  "U0APSMH05B5",
+			"garth": "UGARTH0001",
 		},
 	}
-	in := "@ross agrees — ask @TIM and @Alex too."
+	in := "@ross agrees — ask @TIM, @Alex, and @garth too."
 	out := formatOutgoingSlackMessage(in, cfg)
-	if !strings.Contains(out, "<@U0APX108QE7>") || !strings.Contains(out, "<@U0AQ10R2H8E>") || !strings.Contains(out, "<@U0APSMH05B5>") {
+	if !strings.Contains(out, "<@U0APX108QE7>") || !strings.Contains(out, "<@U0AQ10R2H8E>") || !strings.Contains(out, "<@U0APSMH05B5>") || !strings.Contains(out, "<@UGARTH0001>") {
 		t.Fatalf("expected Slack mention tokens, got %q", out)
 	}
 	if strings.Contains(out, "@ross") || strings.Contains(out, "@TIM") {

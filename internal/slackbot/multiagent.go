@@ -349,7 +349,7 @@ func (b *Bot) postMultiagentReply(ctx context.Context, channel, userPayload stri
 	if b.cfg.MultiagentConfigured() {
 		p := b.cfg.MultiagentHandoffProbability
 		if rand.Float64() < p {
-			suffix += "\n\nHand-off cue for this turn: include one @mention of another squad member (@ross/@tim/@alex) with a concrete question or next step."
+			suffix += "\n\nHand-off cue for this turn: include one @mention of another squad member (@ross/@tim/@alex/@garth) with a concrete question or next step."
 		} else {
 			suffix += "\n\nHand-off cue for this turn: keep this reply self-contained; do not @mention squad members unless strictly necessary."
 		}

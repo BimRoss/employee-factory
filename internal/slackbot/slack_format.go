@@ -21,7 +21,7 @@ var (
 // Product intent: keep expressive Slack-native mrkdwn (bold, code, quotes)—not “plain ASCII only.”
 // Block Kit modals / richer interactive surfaces stay out of scope until we wire them deliberately.
 // It converts **bold** to *bold* (Slack mrkdwn), strips ATX # headings, simplifies [text](url) to label text,
-// and rewrites @ross / @tim / @alex to Slack mention tokens when squad IDs are configured.
+// and rewrites @ross / @tim / @alex / @garth (any configured squad keys) to Slack mention tokens when squad IDs are configured.
 func formatOutgoingSlackMessage(s string, cfg *config.Config) string {
 	s = strings.TrimSpace(s)
 	if s == "" {
