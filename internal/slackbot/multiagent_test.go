@@ -63,21 +63,6 @@ func TestBuildSlots_rounds(t *testing.T) {
 	}
 }
 
-func TestMultiagentRounds(t *testing.T) {
-	if multiagentRounds("Hey everyone — thoughts?") != 2 {
-		t.Fatal("whole-word everyone → two rounds when squad is active")
-	}
-	if multiagentRounds("Ping <!channel> please") != 1 {
-		t.Fatal("@channel is one round")
-	}
-	if multiagentRounds("Use <!everyone|@everyone> for this") != 2 {
-		t.Fatal("@everyone is two rounds (Slack may add label after |)")
-	}
-	if multiagentRounds("everything is fine") != 1 {
-		t.Fatal("everything is fine should be one round")
-	}
-}
-
 func TestBroadcastMultiagentTrigger(t *testing.T) {
 	if !broadcastMultiagentTrigger("<!everyone> hi") {
 		t.Fatal("everyone token")

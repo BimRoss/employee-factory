@@ -170,7 +170,8 @@ func (b *Bot) onMessage(ctx context.Context, ev *slackevents.MessageEvent) {
 		b.postLLMReply(ctx, channel, text, ev.TimeStamp)
 		return
 	}
-	// message.channels: @everyone / @channel without bot @mentions; first in MULTIAGENT_ORDER coordinates.
+	// message.channels: @everyone / @channel without bot @mentions; each bot runs the same session but
+	// only one ordered squad pass (see multiagentSquadPasses)—not a second full lap.
 	if b.dispatchBroadcastMultiagent(ctx, channel, rawText, ev.TimeStamp) {
 		return
 	}

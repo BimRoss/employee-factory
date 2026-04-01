@@ -18,8 +18,6 @@ import (
 
 var (
 	reSlackUserMention = regexp.MustCompile(`<@(U[A-Za-z0-9]+)>`)
-	// Whole-word "everyone" for two-round mode when multiple squad bots are @mentioned (not used for no-mention broadcasts).
-	reEveryoneWord = regexp.MustCompile(`(?i)(^|[^a-zA-Z0-9_])everyone([^a-zA-Z0-9_]|$)`)
 )
 
 // mentionedSquadKeys returns squad employee keys mentioned in raw Slack text, in MULTIAGENT_ORDER.
@@ -63,19 +61,11 @@ func parseMentionedUserIDs(text string) []string {
 	return out
 }
 
-// multiagentRounds returns how many full squad passes to run. Two rounds when Slack’s
-// @everyone (<!everyone…>) is present, or the word "everyone" as a whole word (flexible for clients).
-// @channel (<!channel…>) and plain multi-mention stay at one round.
-func multiagentRounds(rawText string) int {
-	lower := strings.ToLower(rawText)
-	if strings.Contains(lower, "<!everyone") {
-		return 2
-	}
-	if reEveryoneWord.MatchString(rawText) {
-		return 2
-	}
-	return 1
-}
+// multiagentSquadPasses is how many full ordered passes the squad runs per trigger (one pass =
+// each participant posts once in MULTIAGENT_ORDER). A second lap used to run for @everyone and
+// produced repetitive “accumulated plan” replies; one pass keeps the turn sharp. Further back-and-
+// forth is human-driven (@mention bots again) or future squad-to-squad handling—not fixed rounds.
+const multiagentSquadPasses = 1
 
 // broadcastMultiagentTrigger is true for Slack’s channel-wide tokens. Used when no bot is
 // @mentioned — each squad bot starts runMultiagentSession; each posts only its own slots.
@@ -192,7 +182,7 @@ func (b *Bot) runMultiagentSession(ctx context.Context, channel, rawText string,
 	if len(participants) < 2 {
 		return
 	}
-	rounds := multiagentRounds(rawText)
+	rounds := multiagentSquadPasses
 	slots := buildSlots(participants, rounds, b.cfg.MultiagentBotUserIDs)
 	if len(slots) == 0 {
 		return
