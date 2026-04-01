@@ -25,9 +25,9 @@ func alexKeywordHint(s string) string {
 	lower := strings.ToLower(s)
 	switch {
 	case containsAny(lower, []string{"closer", "objection", "sales call", "close the", "closing"}):
-		return "Prefer CLOSER / sales-call frameworks from the persona (e.g. alex-sales-closer, alex-ultimate-sales-blueprint)."
+		return "Prefer CLOSER / sales-call frameworks from the persona (e.g. alex-sales-closer)."
 	case containsAny(lower, []string{"core four", "obscurity", "outreach", "cold email", "content", "run ads", "paid ads", "advertising"}):
-		return "Prefer acquisition / obscurity framing (e.g. alex-obscurity-boom, Rule of 100, boom vs optimization)."
+		return "Prefer acquisition framing still in the persona (e.g. alex-stair-step-bucket, alex-one-channel-avatar-product, boom vs optimization ideas where present)."
 	case containsAny(lower, []string{"price", "pricing", "raise price", "anchor", "grandfather"}):
 		return "Prefer pricing frameworks (e.g. alex-raising-prices, alex-anchor-expensive, alex-pricing-extremes)."
 	case containsAny(lower, []string{"stair step", "bucket", "100k", "advertise", "ads first"}):
