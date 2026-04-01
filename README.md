@@ -16,6 +16,7 @@ For `@everyone` triggers (no individual bot `@mention`), each squad pod receives
 - **Coordination** is **not** Redis: each bot polls `conversations.history` until prior squad messages match the expected slot prefix, then calls the LLM and posts (same as before).
 - **`MULTIAGENT_BROADCAST_ROUNDS`** (default `1`) is how many full passes over that shuffled order to run per trigger (`1` ⇒ each agent replies once).
 - **`MULTIAGENT_BROADCAST_HANDOFF_PROBABILITY`** (default `0.5`) controls per-reply chance to include exactly one other-agent `@mention`, which creates organic follow-on turns without hardcoding message counts.
+- **Deterministic branch mode**: with `MULTIAGENT_BROADCAST_BRANCHING_ENABLED=true`, each `<!everyone>` trigger deterministically flips into branch mode using `MULTIAGENT_BROADCAST_BRANCHING_PROBABILITY` (default `0.5`). Branch mode uses `MULTIAGENT_BROADCAST_BRANCHING_HANDOFF_PROBABILITY` (default `1.0`) to produce richer cross-agent follow-ons while keeping ordering stable across pods.
 
 ### Turn quality policy (runtime-enforced prompt block)
 
@@ -25,6 +26,15 @@ During multi-agent sessions, each slot now receives an explicit policy block bef
 - **Novelty guard**: each agent is instructed to add one *new* angle instead of repeating previous bot lines.
 - **Single closer pattern**: non-final slots are instructed not to provide the final merged answer; the final slot is instructed to provide the closing recommendation.
 - **Close without ping-pong**: final slot suppresses handoff mentions by forcing handoff probability to `0` for that slot only.
+
+### Never-sliced outbound safety
+
+Before posting, replies pass a completion gate that checks for:
+
+- likely clipped tails
+- prompt/rule artifact leakage (for example internal labels/slugs)
+
+If flagged, the bot runs one repair rewrite pass and only then posts. If repair still fails, it posts a short complete fallback sentence instead of an empty or broken message.
 
 ## Deploying to the admin cluster (Fleet)
 

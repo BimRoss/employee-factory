@@ -87,14 +87,27 @@ func TestFormatOutgoingSlackMessage_stripsSelfMention(t *testing.T) {
 
 func TestNormalizeSlackReply_capsLength(t *testing.T) {
 	cfg := &config.Config{}
-	in := "Line one with useful content.\nLine two with details.\nLine three should be dropped.\nLine four too."
+	in := "Line one with useful content.\nLine two with details.\nLine three still allowed.\nLine four still allowed.\nLine five should be dropped."
 	out := normalizeSlackReply(in, cfg, "")
 	lines := strings.Split(out, "\n")
-	if len(lines) > 2 {
-		t.Fatalf("expected <=2 lines, got %d: %q", len(lines), out)
+	if len(lines) > 4 {
+		t.Fatalf("expected <=4 lines, got %d: %q", len(lines), out)
 	}
-	if strings.Contains(out, "Line three") {
+	if strings.Contains(out, "Line five") {
 		t.Fatalf("expected overflow lines dropped, got %q", out)
+	}
+}
+
+func TestNormalizeSlackReply_truncationEndsAsCompleteSentence(t *testing.T) {
+	cfg := &config.Config{}
+	in := strings.Repeat("This is a long sentence without punctuation ", 40) + "final thought"
+	out := normalizeSlackReply(in, cfg, "")
+	if strings.HasSuffix(out, "...") {
+		t.Fatalf("expected no ellipsis truncation tail, got %q", out)
+	}
+	last := out[len(out)-1]
+	if last != '.' && last != '!' && last != '?' && last != '"' && last != '\'' {
+		t.Fatalf("expected sentence-safe ending punctuation, got %q", out)
 	}
 }
 

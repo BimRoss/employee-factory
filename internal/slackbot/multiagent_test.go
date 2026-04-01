@@ -150,6 +150,37 @@ func TestBroadcastMultiagentTrigger(t *testing.T) {
 	}
 }
 
+func TestShouldUseBroadcastBranchMode_deterministic(t *testing.T) {
+	order := []string{"ross", "tim", "alex", "garth"}
+	a := shouldUseBroadcastBranchMode("1743491234.567890", order, "secret", 0.5)
+	b := shouldUseBroadcastBranchMode("1743491234.567890", order, "secret", 0.5)
+	if a != b {
+		t.Fatalf("expected deterministic result for same anchor/secret/order: %v vs %v", a, b)
+	}
+}
+
+func TestShouldUseBroadcastBranchMode_bounds(t *testing.T) {
+	order := []string{"ross", "tim"}
+	if shouldUseBroadcastBranchMode("1743491234.567890", order, "secret", 0.0) {
+		t.Fatal("probability 0 should never branch")
+	}
+	if !shouldUseBroadcastBranchMode("1743491234.567890", order, "secret", 1.0) {
+		t.Fatal("probability 1 should always branch")
+	}
+}
+
+func TestMixedEveryoneAndSingleMention_parsing(t *testing.T) {
+	cfg := testCfgSquad()
+	raw := "<!everyone> quick take from <@UALEX003>"
+	if !broadcastMultiagentTrigger(raw) {
+		t.Fatal("expected broadcast trigger to remain true for <!everyone>")
+	}
+	got := mentionedSquadKeys(raw, cfg)
+	if len(got) != 1 || got[0] != "alex" {
+		t.Fatalf("expected single targeted mention preserved, got %v", got)
+	}
+}
+
 func TestStripSquadUserMentions(t *testing.T) {
 	cfg := testCfgSquad()
 	squad := squadUserIDSet(cfg)

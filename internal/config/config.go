@@ -63,6 +63,12 @@ type Config struct {
 	// MultiagentBroadcastHandoffProbability: same as above for @everyone / <!channel> multiagent runs only.
 	// When unset in env, defaults to MultiagentHandoffProbability (typically 0.5).
 	MultiagentBroadcastHandoffProbability float64
+	// MultiagentBroadcastBranchingEnabled enables deterministic branch-mode fan-out for @everyone runs.
+	MultiagentBroadcastBranchingEnabled bool
+	// MultiagentBroadcastBranchingProbability is the deterministic chance [0..1] to use branch-mode handoff probability.
+	MultiagentBroadcastBranchingProbability float64
+	// MultiagentBroadcastBranchingHandoffProbability is the per-reply handoff chance used when branch mode is selected.
+	MultiagentBroadcastBranchingHandoffProbability float64
 	// MultiagentShuffleSecret: optional; mixed into the SHA-256 seed for <!everyone> / <!channel> turn order (set the same on all squad pods).
 	MultiagentShuffleSecret string
 	// MultiagentBroadcastRounds: number of full passes over the shuffled squad per broadcast (default 1: each agent replies once).
@@ -109,8 +115,8 @@ func Load() (*Config, error) {
 		LLMModel:          llmModel,
 		LLMAPIKey:         strings.TrimSpace(firstNonEmpty(os.Getenv("LLM_API_KEY"), employeePrefixed(empID, "CHUTES_KEY"), os.Getenv("ALEX_CHUTES_KEY"))),
 		LLMSystemMaxRunes: parseIntEnvSigned("LLM_SYSTEM_MAX_RUNES", 48000),
-		// Default ceiling avoids mid-sentence cutoffs; brevity comes from the Slack system suffix, not a tiny cap.
-		LLMMaxTokens:              parseIntEnvMin("LLM_MAX_TOKENS", 512, 1),
+		// Higher default budget reduces model-side truncation; brevity is still governed by Slack response policy.
+		LLMMaxTokens:              parseIntEnvMin("LLM_MAX_TOKENS", 900, 1),
 		LLMTemperature:            parseFloat32Env("LLM_TEMPERATURE", 0.55),
 		LLMTopP:                   parseOptionalFloat32("LLM_TOP_P"),
 		LLMMaxRetries:             parseIntEnvMinAllowZero("LLM_MAX_RETRIES", 2, 0),
@@ -269,6 +275,14 @@ func parseMultiagentEnv(cfg *Config) error {
 			cfg.MultiagentBroadcastHandoffProbability = f
 		}
 	}
+	cfg.MultiagentBroadcastBranchingEnabled = parseBoolEnv("MULTIAGENT_BROADCAST_BRANCHING_ENABLED", true)
+	cfg.MultiagentBroadcastBranchingProbability = parseFloat64EnvClamp("MULTIAGENT_BROADCAST_BRANCHING_PROBABILITY", 0.5, 0, 1)
+	cfg.MultiagentBroadcastBranchingHandoffProbability = parseFloat64EnvClamp(
+		"MULTIAGENT_BROADCAST_BRANCHING_HANDOFF_PROBABILITY",
+		1.0,
+		0,
+		1,
+	)
 	cfg.MultiagentShuffleSecret = strings.TrimSpace(os.Getenv("MULTIAGENT_SHUFFLE_SECRET"))
 	cfg.MultiagentBroadcastRounds = parseIntEnvMin("MULTIAGENT_BROADCAST_ROUNDS", 1, 1)
 	if cfg.MultiagentBroadcastRounds > 24 {

@@ -21,8 +21,8 @@ var (
 )
 
 const (
-	slackReplyMaxLines = 2
-	slackReplyMaxRunes = 240
+	slackReplyMaxLines = 4
+	slackReplyMaxRunes = 600
 )
 
 type squadMember struct {
@@ -90,7 +90,23 @@ func capSlackReplyLength(s string, maxLines int, maxRunes int) string {
 	if maxRunes <= 3 {
 		return string(r[:maxRunes])
 	}
-	return strings.TrimSpace(string(r[:maxRunes-3])) + "..."
+	truncated := strings.TrimSpace(string(r[:maxRunes]))
+	if truncated == "" {
+		return ""
+	}
+	// Prefer a complete sentence boundary over hard rune clipping.
+	lastPunct := strings.LastIndexAny(truncated, ".!?")
+	if lastPunct >= 0 {
+		safe := strings.TrimSpace(truncated[:lastPunct+1])
+		if safe != "" {
+			return safe
+		}
+	}
+	last := truncated[len(truncated)-1]
+	if last != '.' && last != '!' && last != '?' && last != '"' && last != '\'' {
+		truncated += "."
+	}
+	return truncated
 }
 
 func convertGitHubBoldToSlack(s string) string {

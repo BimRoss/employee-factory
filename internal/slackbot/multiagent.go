@@ -95,6 +95,29 @@ func shuffleBroadcastParticipants(anchorTS string, order []string, secret string
 	return out
 }
 
+// shouldUseBroadcastBranchMode deterministically selects branch mode for a broadcast trigger.
+// All pods compute the same result from anchorTS + order + optional secret.
+func shouldUseBroadcastBranchMode(anchorTS string, order []string, secret string, probability float64) bool {
+	if probability <= 0 {
+		return false
+	}
+	if probability >= 1 {
+		return true
+	}
+	var b strings.Builder
+	b.WriteString("broadcast-branch")
+	b.WriteByte(0)
+	b.WriteString(strings.TrimSpace(anchorTS))
+	b.WriteByte(0)
+	b.WriteString(strings.Join(order, ","))
+	b.WriteByte(0)
+	b.WriteString(secret)
+	sum := sha256.Sum256([]byte(b.String()))
+	x := binary.BigEndian.Uint64(sum[8:16])
+	u := float64(x) / float64(^uint64(0))
+	return u < probability
+}
+
 // broadcastMultiagentTrigger is true only for Slack <!everyone>.
 // Used when no bot is @mentioned — each squad bot starts runMultiagentSession; each posts only its own slots.
 func broadcastMultiagentTrigger(rawText string) bool {
@@ -444,7 +467,7 @@ func (b *Bot) postMultiagentReply(ctx context.Context, channel, userPayload stri
 	reply, err := b.llm.Reply(ctx, persona, suffix, userPayload)
 	if err != nil {
 		log.Printf("llm reply error: %v", err)
-		opts := []slack.MsgOption{slack.MsgOptionText("Sorry, I hit an error generating a reply.", false)}
+		opts := []slack.MsgOption{slack.MsgOptionText("Quick take: resend that and I will answer directly in one clean pass.", false)}
 		_, _, err = b.api.PostMessageContext(ctx, channel, opts...)
 		if err != nil {
 			log.Printf("slack post message: %v", err)
@@ -458,7 +481,7 @@ func (b *Bot) postMultiagentReply(ctx context.Context, channel, userPayload stri
 	if reply == "" {
 		reply = "…"
 	}
-
+	reply = b.repairOutboundReply(ctx, persona, userPayload, reply)
 	reply = normalizeSlackReply(reply, b.cfg, b.botUserID)
 	reply = enforceMultiagentMentionPolicy(reply, b.cfg, b.botUserID, handoff)
 	reply = normalizeSlackReply(reply, b.cfg, b.botUserID)

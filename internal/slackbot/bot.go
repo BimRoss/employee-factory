@@ -333,7 +333,16 @@ func (b *Bot) dispatchBroadcastMultiagent(ctx context.Context, channel, rawText 
 	if rounds < 1 {
 		rounds = 1
 	}
-	go b.runMultiagentSession(ctx, channel, rawText, messageTS, participants, rounds, b.cfg.MultiagentBroadcastHandoffProbability)
+	effectiveHandoff := b.cfg.MultiagentBroadcastHandoffProbability
+	if b.cfg.MultiagentBroadcastBranchingEnabled && shouldUseBroadcastBranchMode(
+		messageTS,
+		b.cfg.MultiagentOrder,
+		b.cfg.MultiagentShuffleSecret,
+		b.cfg.MultiagentBroadcastBranchingProbability,
+	) {
+		effectiveHandoff = b.cfg.MultiagentBroadcastBranchingHandoffProbability
+	}
+	go b.runMultiagentSession(ctx, channel, rawText, messageTS, participants, rounds, effectiveHandoff)
 	return true
 }
 
@@ -367,7 +376,7 @@ func (b *Bot) postLLMReply(ctx context.Context, channel, userText, messageTS str
 	reply, err := b.llm.Reply(ctx, persona, slackReplySuffix, userPayload)
 	if err != nil {
 		log.Printf("llm reply error: %v", err)
-		opts := []slack.MsgOption{slack.MsgOptionText("Sorry, I hit an error generating a reply.", false)}
+		opts := []slack.MsgOption{slack.MsgOptionText("Quick take: resend that and I will answer directly in one clean pass.", false)}
 		_, _, err = b.api.PostMessageContext(ctx, channel, opts...)
 		if err != nil {
 			log.Printf("slack post message: %v", err)
@@ -381,7 +390,7 @@ func (b *Bot) postLLMReply(ctx context.Context, channel, userText, messageTS str
 	if reply == "" {
 		reply = "…"
 	}
-
+	reply = b.repairOutboundReply(ctx, persona, userPayload, reply)
 	reply = normalizeSlackReply(reply, b.cfg, b.botUserID)
 	opts := []slack.MsgOption{slack.MsgOptionText(reply, false)}
 	_, _, err = b.api.PostMessageContext(ctx, channel, opts...)
