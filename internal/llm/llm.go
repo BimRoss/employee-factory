@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"strings"
+	"time"
 
 	"github.com/bimross/employee-factory/internal/config"
 	"github.com/mudler/cogito"
@@ -12,22 +13,32 @@ import (
 
 // EmployeeLLM wraps Cogito OpenAI-compatible client (Chutes, OpenRouter, etc.).
 type EmployeeLLM struct {
-	inner          cogito.LLM
+	primary        cogito.LLM
+	fallback       cogito.LLM
+	maxRetries     int
+	retryBackoffMS int
 	maxTokens      int
 	systemMaxRunes int
 	temperature    float32
 	topP           *float32
 }
 
-// New builds an LLM from config (base URL + key + model).
+// New builds an LLM from config (base URL + key + model) with optional retry and fallback model.
 func New(cfg *config.Config) *EmployeeLLM {
-	return &EmployeeLLM{
-		inner:          cogito.NewOpenAILLM(cfg.LLMModel, cfg.LLMAPIKey, cfg.LLMBaseURL),
+	e := &EmployeeLLM{
+		primary:        cogito.NewOpenAILLM(cfg.LLMModel, cfg.LLMAPIKey, cfg.LLMBaseURL),
+		maxRetries:     cfg.LLMMaxRetries,
+		retryBackoffMS: cfg.LLMRetryBackoffMS,
 		maxTokens:      cfg.LLMMaxTokens,
 		systemMaxRunes: cfg.LLMSystemMaxRunes,
 		temperature:    cfg.LLMTemperature,
 		topP:           cfg.LLMTopP,
 	}
+	fb := strings.TrimSpace(cfg.LLMFallbackModel)
+	if fb != "" && fb != cfg.LLMModel {
+		e.fallback = cogito.NewOpenAILLM(fb, cfg.LLMAPIKey, cfg.LLMBaseURL)
+	}
+	return e
 }
 
 // Reply generates an assistant reply. personaBody is truncated to fit systemMaxRunes minus
@@ -56,15 +67,59 @@ func (e *EmployeeLLM) Reply(ctx context.Context, personaBody, slackSystemSuffix,
 		req.TopP = *e.topP
 	}
 
-	resp, err := e.inner.CreateChatCompletion(ctx, req)
-	if err != nil {
+	maxAttempts := 1 + e.maxRetries
+	if maxAttempts < 1 {
+		maxAttempts = 1
+	}
+	var lastErr error
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		if attempt > 0 {
+			if lastErr == nil || !IsTransientLLMError(lastErr) {
+				break
+			}
+			delay := e.retryBackoffMS * (1 << (attempt - 1))
+			if delay > maxRetryBackoffMS {
+				delay = maxRetryBackoffMS
+			}
+			select {
+			case <-ctx.Done():
+				return "", ctx.Err()
+			case <-time.After(time.Duration(delay) * time.Millisecond):
+			}
+			log.Printf("llm: retrying primary completion after transient error (attempt %d/%d)", attempt+1, maxAttempts)
+		}
+
+		resp, err := e.primary.CreateChatCompletion(ctx, req)
+		if err == nil {
+			return chatCompletionText(resp), nil
+		}
+		lastErr = err
+		if !IsTransientLLMError(err) {
+			break
+		}
+	}
+
+	if e.fallback != nil && lastErr != nil && IsTransientLLMError(lastErr) {
+		log.Printf("llm: attempting fallback model after transient primary failure: %v", lastErr)
+		resp, err := e.fallback.CreateChatCompletion(ctx, req)
+		if err == nil {
+			log.Printf("llm: fallback model completion succeeded")
+			return chatCompletionText(resp), nil
+		}
 		return "", err
 	}
-	if len(resp.Choices) == 0 {
-		return "", nil
+
+	if lastErr != nil {
+		return "", lastErr
 	}
-	content := strings.TrimSpace(resp.Choices[0].Message.Content)
-	return content, nil
+	return "", nil
+}
+
+func chatCompletionText(resp openai.ChatCompletionResponse) string {
+	if len(resp.Choices) == 0 {
+		return ""
+	}
+	return strings.TrimSpace(resp.Choices[0].Message.Content)
 }
 
 func composeSystemPrompt(personaBody, suffix string, systemMaxRunes int) string {

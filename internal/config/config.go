@@ -27,6 +27,12 @@ type Config struct {
 	LLMTemperature float32
 	// LLMTopP is optional nucleus sampling; nil means omit (provider default).
 	LLMTopP *float32
+	// LLMMaxRetries is extra completion attempts on the primary model after transient errors (429/502/503, Chutes "no instances").
+	LLMMaxRetries int
+	// LLMRetryBackoffMS is the base delay before the first retry; later retries double it (capped in the LLM package).
+	LLMRetryBackoffMS int
+	// LLMFallbackModel is a smaller or warmer OpenAI-compatible model id (same LLM_BASE_URL and LLM_API_KEY). Empty disables fallback.
+	LLMFallbackModel string
 
 	// Recent channel history (conversations.history) for linear context; env keys LLM_THREAD_*.
 	LLMThreadMaxMessages int
@@ -107,6 +113,9 @@ func Load() (*Config, error) {
 		LLMMaxTokens:              parseIntEnvMin("LLM_MAX_TOKENS", 512, 1),
 		LLMTemperature:            parseFloat32Env("LLM_TEMPERATURE", 0.55),
 		LLMTopP:                   parseOptionalFloat32("LLM_TOP_P"),
+		LLMMaxRetries:             parseIntEnvMinAllowZero("LLM_MAX_RETRIES", 2, 0),
+		LLMRetryBackoffMS:         parseIntEnvMin("LLM_RETRY_BACKOFF_MS", 400, 50),
+		LLMFallbackModel:          strings.TrimSpace(os.Getenv("LLM_FALLBACK_MODEL")),
 		LLMThreadMaxMessages:      parseIntEnvMin("LLM_THREAD_MAX_MESSAGES", 25, 1),
 		LLMThreadMaxRunes:         parseIntEnvMin("LLM_THREAD_MAX_RUNES", 16000, 256),
 		LLMAlexHints:              parseBoolEnv("LLM_ALEX_HINTS", true),
@@ -320,6 +329,19 @@ func parseIntEnvSigned(key string, def int) int {
 
 // parseIntEnvMin parses a positive int; empty uses def; values below min use def.
 func parseIntEnvMin(key string, def, min int) int {
+	v := strings.TrimSpace(os.Getenv(key))
+	if v == "" {
+		return def
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n < min {
+		return def
+	}
+	return n
+}
+
+// parseIntEnvMinAllowZero is like parseIntEnvMin but allows n == min when min is 0.
+func parseIntEnvMinAllowZero(key string, def, min int) int {
 	v := strings.TrimSpace(os.Getenv(key))
 	if v == "" {
 		return def
