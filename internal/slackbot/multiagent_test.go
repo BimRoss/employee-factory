@@ -1,6 +1,7 @@
 package slackbot
 
 import (
+	"math"
 	"testing"
 
 	"github.com/bimross/employee-factory/internal/config"
@@ -83,6 +84,22 @@ func TestCountSquadMessagesInRun(t *testing.T) {
 	}
 	if n := countSquadMessagesInRun(allSquad, squad, 1); n != 2 {
 		t.Fatalf("no human in window: want 2, got %d", n)
+	}
+}
+
+func TestSampleBroadcastRoundCount_meanMessagesNearTarget(t *testing.T) {
+	const iters = 8000
+	participants := 4
+	target := 10
+	maxR := 6
+	var totalMsgs int
+	for i := 0; i < iters; i++ {
+		r := sampleBroadcastRoundCount(participants, target, maxR)
+		totalMsgs += r * participants
+	}
+	mean := float64(totalMsgs) / float64(iters)
+	if math.Abs(mean-float64(target)) > 1.5 {
+		t.Fatalf("mean squad messages %.2f want ~%d (4 participants)", mean, target)
 	}
 }
 

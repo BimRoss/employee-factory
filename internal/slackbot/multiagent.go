@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"math"
 	"math/rand"
 	"regexp"
 	"sort"
@@ -62,11 +63,57 @@ func parseMentionedUserIDs(text string) []string {
 	return out
 }
 
-// multiagentSquadPasses is how many full ordered passes the squad runs per trigger (one pass =
-// each participant posts once in MULTIAGENT_ORDER). A second lap used to run for @everyone and
-// produced repetitive “accumulated plan” replies; one pass keeps the turn sharp. Further back-and-
-// forth is human-driven (@mention bots again) or future squad-to-squad handling—not fixed rounds.
+// multiagentSquadPasses is how many full ordered passes run for explicit multi-bot @mentions (not
+// channel-wide broadcast). One pass = each participant posts once in MULTIAGENT_ORDER.
 const multiagentSquadPasses = 1
+
+// sampleBroadcastRoundCount picks how many full passes to run for <!everyone> / <!channel> so mean
+// total squad messages ≈ targetTotal (e.g. 10). Variance comes from randomizing between floor/ceil
+// of targetTotal/participantCount and optional rare ±1 when that value is an integer.
+func sampleBroadcastRoundCount(participantCount, targetTotal, maxRounds int) int {
+	if participantCount < 1 {
+		return 1
+	}
+	if targetTotal < 1 {
+		targetTotal = 10
+	}
+	if maxRounds < 1 {
+		maxRounds = 6
+	}
+	t := float64(targetTotal) / float64(participantCount)
+	low := int(math.Floor(t))
+	high := int(math.Ceil(t))
+	if low < 1 {
+		low = 1
+	}
+	if high < low {
+		high = low
+	}
+	var rounds int
+	if low == high {
+		rounds = low
+		// Integer target (e.g. 4 people × 2 rounds = 8): add light variance toward longer threads.
+		if rand.Float64() < 0.12 && rounds < maxRounds {
+			rounds++
+		} else if rand.Float64() < 0.08 && rounds > 1 {
+			rounds--
+		}
+	} else {
+		p := (t - float64(low)) / float64(high-low)
+		if rand.Float64() < p {
+			rounds = high
+		} else {
+			rounds = low
+		}
+	}
+	if rounds > maxRounds {
+		rounds = maxRounds
+	}
+	if rounds < 1 {
+		rounds = 1
+	}
+	return rounds
+}
 
 // broadcastMultiagentTrigger is true for Slack’s channel-wide tokens. Used when no bot is
 // @mentioned — each squad bot starts runMultiagentSession; each posts only its own slots.
@@ -208,14 +255,23 @@ func formatPriorSquadTurns(slots []string, slotIndex int, squadMsgs []slack.Mess
 // runMultiagentSession coordinates sequential replies on the channel timeline (no thread_ts).
 // messageTS is the triggering message timestamp; squad coordination uses messages posted after it.
 // participants is the ordered squad subset (explicit @mentions) or full MULTIAGENT_ORDER (broadcast).
-func (b *Bot) runMultiagentSession(ctx context.Context, channel, rawText string, messageTS string, participants []string) {
+// handoffProbability is per-reply chance to nudge an @mention of another squad member (0–1).
+func (b *Bot) runMultiagentSession(ctx context.Context, channel, rawText string, messageTS string, participants []string, rounds int, handoffProbability float64) {
 	if !b.cfg.MultiagentConfigured() {
 		return
 	}
 	if len(participants) < 2 {
 		return
 	}
-	rounds := multiagentSquadPasses
+	if rounds < 1 {
+		rounds = 1
+	}
+	if handoffProbability < 0 {
+		handoffProbability = 0
+	}
+	if handoffProbability > 1 {
+		handoffProbability = 1
+	}
 	slots := buildSlots(participants, rounds, b.cfg.MultiagentBotUserIDs)
 	if len(slots) == 0 {
 		return
@@ -265,7 +321,7 @@ func (b *Bot) runMultiagentSession(ctx context.Context, channel, rawText string,
 
 		log.Printf("multiagent: generating employee=%s slot=%d user_payload_runes=%d (includes prior squad context when slot>0)",
 			b.cfg.EmployeeID, k, utf8.RuneCountInString(userPayload))
-		b.postMultiagentReply(ctx, channel, userPayload)
+		b.postMultiagentReply(ctx, channel, userPayload, handoffProbability)
 	}
 }
 
@@ -330,7 +386,7 @@ func (b *Bot) squadMessagesInChannelAfter(ctx context.Context, channelID, parent
 	return out, nil
 }
 
-func (b *Bot) postMultiagentReply(ctx context.Context, channel, userPayload string) {
+func (b *Bot) postMultiagentReply(ctx context.Context, channel, userPayload string, handoffProbability float64) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
@@ -347,7 +403,7 @@ func (b *Bot) postMultiagentReply(ctx context.Context, channel, userPayload stri
 
 	suffix := slackReplySuffix
 	if b.cfg.MultiagentConfigured() {
-		p := b.cfg.MultiagentHandoffProbability
+		p := handoffProbability
 		if rand.Float64() < p {
 			suffix += "\n\nHand-off cue for this turn: include one @mention of another squad member—not yourself (@ross/@tim/@alex/@garth) with a concrete question or next step."
 		} else {

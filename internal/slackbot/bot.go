@@ -178,8 +178,8 @@ func (b *Bot) onMessage(ctx context.Context, ev *slackevents.MessageEvent) {
 		b.postLLMReply(ctx, channel, text, ev.TimeStamp)
 		return
 	}
-	// message.channels: @everyone / @channel without bot @mentions; each bot runs the same session but
-	// only one ordered squad pass (see multiagentSquadPasses)—not a second full lap.
+	// message.channels: @everyone / @channel without bot @mentions; each bot runs the same session with
+	// a sampled number of ordered passes (see sampleBroadcastRoundCount)—longer than single @mention rounds.
 	if b.dispatchBroadcastMultiagent(ctx, channel, rawText, ev.TimeStamp) {
 		return
 	}
@@ -296,7 +296,7 @@ func (b *Bot) dispatchMultiagentChannel(ctx context.Context, channel, rawText st
 	if len(participants) < 2 {
 		return false
 	}
-	go b.runMultiagentSession(ctx, channel, rawText, messageTS, participants)
+	go b.runMultiagentSession(ctx, channel, rawText, messageTS, participants, multiagentSquadPasses, b.cfg.MultiagentHandoffProbability)
 	return true
 }
 
@@ -315,7 +315,8 @@ func (b *Bot) dispatchBroadcastMultiagent(ctx context.Context, channel, rawText 
 	if len(participants) < 2 {
 		return false
 	}
-	go b.runMultiagentSession(ctx, channel, rawText, messageTS, participants)
+	rounds := sampleBroadcastRoundCount(len(participants), b.cfg.MultiagentBroadcastTargetMessages, b.cfg.MultiagentBroadcastMaxRounds)
+	go b.runMultiagentSession(ctx, channel, rawText, messageTS, participants, rounds, b.cfg.MultiagentBroadcastHandoffProbability)
 	return true
 }
 

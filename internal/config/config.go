@@ -54,6 +54,13 @@ type Config struct {
 	MultiagentWaitTimeoutSec int               // max wait for a predecessor to post
 	// MultiagentHandoffProbability: per scheduled multiagent reply, chance (0–1) to nudge @mention handoff vs self-contained.
 	MultiagentHandoffProbability float64
+	// MultiagentBroadcastHandoffProbability: same as above for @everyone / <!channel> multiagent runs only.
+	// When unset in env, defaults to MultiagentHandoffProbability (typically 0.5).
+	MultiagentBroadcastHandoffProbability float64
+	// MultiagentBroadcastTargetMessages: desired mean total squad posts per broadcast trigger (rounds scale with squad size).
+	MultiagentBroadcastTargetMessages int
+	// MultiagentBroadcastMaxRounds: upper bound on full ordered passes for broadcast; 0 = default 6.
+	MultiagentBroadcastMaxRounds int
 	// MultiagentSquadRunMax: max squad-bot messages in the current run (after last non-squad user); 0 = no cap.
 	MultiagentSquadRunMax int
 }
@@ -213,6 +220,20 @@ func parseMultiagentEnv(cfg *Config) error {
 	cfg.MultiagentWaitTimeoutSec = parseIntEnvMin("MULTIAGENT_WAIT_TIMEOUT_SEC", 300, 5)
 	cfg.MultiagentEnabled = parseBoolEnv("MULTIAGENT_ENABLED", true)
 	cfg.MultiagentHandoffProbability = parseFloat64EnvClamp("MULTIAGENT_HANDOFF_PROBABILITY", 0.5, 0, 1)
+	cfg.MultiagentBroadcastHandoffProbability = cfg.MultiagentHandoffProbability
+	if v := strings.TrimSpace(os.Getenv("MULTIAGENT_BROADCAST_HANDOFF_PROBABILITY")); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil {
+			if f < 0 {
+				f = 0
+			}
+			if f > 1 {
+				f = 1
+			}
+			cfg.MultiagentBroadcastHandoffProbability = f
+		}
+	}
+	cfg.MultiagentBroadcastTargetMessages = parseIntEnvMin("MULTIAGENT_BROADCAST_TARGET_MESSAGES", 10, 1)
+	cfg.MultiagentBroadcastMaxRounds = parseIntEnvMin("MULTIAGENT_BROADCAST_MAX_ROUNDS", 6, 1)
 	cfg.MultiagentSquadRunMax = parseIntEnvDefaultOrZero("MULTIAGENT_SQUAD_RUN_MAX", 12)
 	return nil
 }
