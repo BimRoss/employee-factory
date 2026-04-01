@@ -2,6 +2,7 @@
 set -euo pipefail
 
 # Apply employee-factory Kubernetes runtime secret from a local .env (kubectl apply).
+# Direction: local .env → cluster Secret only. Does not read the cluster or modify .env.
 #
 # Secret SECRET_NAME (default employee-factory-<EMPLOYEE_ID>-runtime)
 # Keys: LLM_API_KEY, SLACK_BOT_TOKEN, SLACK_APP_TOKEN; optional LLM_MODEL
