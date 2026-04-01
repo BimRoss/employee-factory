@@ -131,7 +131,7 @@ func (b *Bot) onMessage(ctx context.Context, ev *slackevents.MessageEvent) {
 	if ev == nil {
 		return
 	}
-	if ev.BotID != "" || ev.SubType == "message_changed" || ev.SubType == "message_deleted" {
+	if ev.SubType == "message_changed" || ev.SubType == "message_deleted" {
 		return
 	}
 	if ev.User == b.botUserID {
@@ -155,6 +155,14 @@ func (b *Bot) onMessage(ctx context.Context, ev *slackevents.MessageEvent) {
 		return
 	}
 	if strings.TrimSpace(ev.ThreadTimeStamp) != "" {
+		return
+	}
+
+	// Another squad bot @mentioned this bot—organic follow-up (not a second multiagent lap).
+	if ev.BotID != "" {
+		if b.trySquadBotMentionTrigger(ctx, channel, rawText, ev) {
+			return
+		}
 		return
 	}
 
@@ -201,6 +209,81 @@ func (b *Bot) onAppMention(ctx context.Context, ev *slackevents.AppMentionEvent)
 		return
 	}
 	b.postLLMReply(ctx, channel, text, ev.TimeStamp)
+}
+
+// trySquadBotMentionTrigger handles messages posted by a squad bot that @mention this bot.
+// Returns true if the event was handled (including skipped due to run cap).
+func (b *Bot) trySquadBotMentionTrigger(ctx context.Context, channel, rawText string, ev *slackevents.MessageEvent) bool {
+	if !b.cfg.MultiagentConfigured() {
+		return false
+	}
+	squad := squadUserIDSet(b.cfg)
+	if !squad[ev.User] {
+		return false
+	}
+	mention := fmt.Sprintf("<@%s>", b.botUserID)
+	if !strings.Contains(rawText, mention) {
+		return false
+	}
+
+	n, err := b.squadRunCountThrough(ctx, channel, ev.TimeStamp)
+	if err != nil {
+		log.Printf("multiagent: squad run count: %v", err)
+		return true
+	}
+	max := b.cfg.MultiagentSquadRunMax
+	if max > 0 && n >= max {
+		log.Printf("multiagent: squad run cap (%d) reached (n=%d), skipping bot-mention reply", max, n)
+		return true
+	}
+
+	text := strings.TrimSpace(strings.ReplaceAll(strings.ReplaceAll(rawText, mention, ""), "  ", " "))
+	if text == "" {
+		text = "(no text besides mention)"
+	}
+	payload := "A squad bot addressed you in-channel:\n" + text
+	b.postLLMReply(ctx, channel, payload, ev.TimeStamp)
+	return true
+}
+
+// squadRunCountThrough counts squad-bot messages in the current run through the message at throughTS (inclusive).
+func (b *Bot) squadRunCountThrough(ctx context.Context, channelID, throughTS string) (int, error) {
+	squad := squadUserIDSet(b.cfg)
+	limit := 100
+	params := &slack.GetConversationHistoryParameters{
+		ChannelID: channelID,
+		Latest:    throughTS,
+		Inclusive: true,
+		Limit:     limit,
+	}
+	resp, err := b.api.GetConversationHistoryContext(ctx, params)
+	if err != nil {
+		return 0, err
+	}
+	msgs := append([]slack.Message(nil), resp.Messages...)
+	for i, j := 0, len(msgs)-1; i < j; i, j = i+1, j-1 {
+		msgs[i], msgs[j] = msgs[j], msgs[i]
+	}
+	idx := -1
+	target := parseSlackTSToFloat(throughTS)
+	for i := range msgs {
+		if msgs[i].Timestamp == throughTS {
+			idx = i
+			break
+		}
+	}
+	if idx == -1 {
+		for i := range msgs {
+			if parseSlackTSToFloat(msgs[i].Timestamp) == target {
+				idx = i
+				break
+			}
+		}
+	}
+	if idx == -1 {
+		return 0, fmt.Errorf("through message not in history window")
+	}
+	return countSquadMessagesInRun(msgs, squad, idx), nil
 }
 
 // dispatchMultiagentChannel starts a sequential multi-bot session when squad env is configured

@@ -63,6 +63,29 @@ func TestBuildSlots_rounds(t *testing.T) {
 	}
 }
 
+func TestCountSquadMessagesInRun(t *testing.T) {
+	squad := map[string]bool{"U1": true, "U2": true}
+	msgs := []slack.Message{
+		{Msg: slack.Msg{User: "UH", Text: "hi"}},
+		{Msg: slack.Msg{User: "U1", Text: "a"}},
+		{Msg: slack.Msg{User: "U2", Text: "b"}},
+		{Msg: slack.Msg{User: "U1", Text: "c"}},
+	}
+	if n := countSquadMessagesInRun(msgs, squad, 3); n != 3 {
+		t.Fatalf("want 3 squad in run after human, got %d", n)
+	}
+	if n := countSquadMessagesInRun(msgs, squad, 2); n != 2 {
+		t.Fatalf("want 2 through idx 2, got %d", n)
+	}
+	allSquad := []slack.Message{
+		{Msg: slack.Msg{User: "U1"}},
+		{Msg: slack.Msg{User: "U2"}},
+	}
+	if n := countSquadMessagesInRun(allSquad, squad, 1); n != 2 {
+		t.Fatalf("no human in window: want 2, got %d", n)
+	}
+}
+
 func TestBroadcastMultiagentTrigger(t *testing.T) {
 	if !broadcastMultiagentTrigger("<!everyone> hi") {
 		t.Fatal("everyone token")

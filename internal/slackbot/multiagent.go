@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"math/rand"
 	"regexp"
 	"sort"
 	"strconv"
@@ -126,6 +127,38 @@ func parseSlackTSToFloat(ts string) float64 {
 }
 
 // prefixMatchesSquadSlots returns true if the first k squad messages match slots[0:k].
+// countSquadMessagesInRun counts squad messages in msgs (oldest-first) in the run ending at
+// throughIdx. The run starts after the last message before or at throughIdx whose User is not in
+// squad (walking backward from throughIdx). Empty User is ignored for anchor detection.
+func countSquadMessagesInRun(msgs []slack.Message, squad map[string]bool, throughIdx int) int {
+	if throughIdx < 0 || throughIdx >= len(msgs) || len(squad) == 0 {
+		return 0
+	}
+	anchor := -1
+	for i := throughIdx; i >= 0; i-- {
+		u := msgs[i].User
+		if u == "" {
+			continue
+		}
+		if !squad[u] {
+			anchor = i
+			break
+		}
+	}
+	start := anchor + 1
+	if anchor == -1 {
+		start = 0
+	}
+	n := 0
+	for i := start; i <= throughIdx; i++ {
+		u := msgs[i].User
+		if u != "" && squad[u] {
+			n++
+		}
+	}
+	return n
+}
+
 func prefixMatchesSquadSlots(squadMsgs []slack.Message, slots []string, k int) bool {
 	if k == 0 {
 		return true
@@ -312,7 +345,17 @@ func (b *Bot) postMultiagentReply(ctx context.Context, channel, userPayload stri
 		persona = "You are a helpful assistant."
 	}
 
-	reply, err := b.llm.Reply(ctx, persona, slackReplySuffix, userPayload)
+	suffix := slackReplySuffix
+	if b.cfg.MultiagentConfigured() {
+		p := b.cfg.MultiagentHandoffProbability
+		if rand.Float64() < p {
+			suffix += "\n\nHand-off cue for this turn: include one @mention of another squad member (@ross/@tim/@alex) with a concrete question or next step."
+		} else {
+			suffix += "\n\nHand-off cue for this turn: keep this reply self-contained; do not @mention squad members unless strictly necessary."
+		}
+	}
+
+	reply, err := b.llm.Reply(ctx, persona, suffix, userPayload)
 	if err != nil {
 		log.Printf("llm reply error: %v", err)
 		opts := []slack.MsgOption{slack.MsgOptionText("Sorry, I hit an error generating a reply.", false)}

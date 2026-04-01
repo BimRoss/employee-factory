@@ -52,6 +52,10 @@ type Config struct {
 	MultiagentOrder          []string          // employee keys, e.g. ross, tim, alex
 	MultiagentPollInterval   int               // milliseconds between Slack polls while waiting
 	MultiagentWaitTimeoutSec int               // max wait for a predecessor to post
+	// MultiagentHandoffProbability: per scheduled multiagent reply, chance (0–1) to nudge @mention handoff vs self-contained.
+	MultiagentHandoffProbability float64
+	// MultiagentSquadRunMax: max squad-bot messages in the current run (after last non-squad user); 0 = no cap.
+	MultiagentSquadRunMax int
 }
 
 // Load reads environment variables. Canonical keys (LLM_*, SLACK_*) take precedence;
@@ -208,6 +212,8 @@ func parseMultiagentEnv(cfg *Config) error {
 	cfg.MultiagentPollInterval = parseIntEnvMin("MULTIAGENT_POLL_INTERVAL_MS", 800, 50)
 	cfg.MultiagentWaitTimeoutSec = parseIntEnvMin("MULTIAGENT_WAIT_TIMEOUT_SEC", 300, 5)
 	cfg.MultiagentEnabled = parseBoolEnv("MULTIAGENT_ENABLED", true)
+	cfg.MultiagentHandoffProbability = parseFloat64EnvClamp("MULTIAGENT_HANDOFF_PROBABILITY", 0.5, 0, 1)
+	cfg.MultiagentSquadRunMax = parseIntEnvDefaultOrZero("MULTIAGENT_SQUAD_RUN_MAX", 12)
 	return nil
 }
 
@@ -330,4 +336,23 @@ func parseBoolEnv(key string, def bool) bool {
 	default:
 		return def
 	}
+}
+
+// parseFloat64EnvClamp parses a float env; empty uses def; invalid uses def; clamps to [min, max].
+func parseFloat64EnvClamp(key string, def, min, max float64) float64 {
+	v := strings.TrimSpace(os.Getenv(key))
+	if v == "" {
+		return def
+	}
+	f, err := strconv.ParseFloat(v, 64)
+	if err != nil {
+		return def
+	}
+	if f < min {
+		return min
+	}
+	if f > max {
+		return max
+	}
+	return f
 }
