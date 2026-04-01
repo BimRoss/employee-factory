@@ -22,7 +22,8 @@ var (
 // Block Kit modals / richer interactive surfaces stay out of scope until we wire them deliberately.
 // It converts **bold** to *bold* (Slack mrkdwn), strips ATX # headings, simplifies [text](url) to label text,
 // and rewrites @ross / @tim / @alex / @garth (any configured squad keys) to Slack mention tokens when squad IDs are configured.
-func formatOutgoingSlackMessage(s string, cfg *config.Config) string {
+// selfSlackUserID is this process's Slack bot user id (from auth.test); pass "" in tests. Used to strip self-<@U…> if the model emits it.
+func formatOutgoingSlackMessage(s string, cfg *config.Config, selfSlackUserID string) string {
 	s = strings.TrimSpace(s)
 	if s == "" {
 		return s
@@ -31,6 +32,7 @@ func formatOutgoingSlackMessage(s string, cfg *config.Config) string {
 	s = reBracketLinkMD.ReplaceAllString(s, "$1")
 	s = reMDHeading.ReplaceAllString(s, "")
 	s = substituteSquadAtMentions(s, cfg)
+	s = stripOutgoingSelfMentions(s, cfg, selfSlackUserID)
 	return strings.TrimSpace(s)
 }
 
@@ -52,10 +54,12 @@ func convertGitHubBoldToSlack(s string) string {
 
 // substituteSquadAtMentions turns @ross (any case) into <@U…> so Slack notifies and linkifies correctly.
 // Plain @name without a user id does not reliably ping; see https://api.slack.com/reference/surfaces/formatting
+// The current employee (cfg.EmployeeID) is never converted—stripOutgoingSelfMentions removes any @self / <@self> afterward.
 func substituteSquadAtMentions(s string, cfg *config.Config) string {
 	if cfg == nil || len(cfg.MultiagentBotUserIDs) == 0 {
 		return s
 	}
+	selfKey := strings.ToLower(strings.TrimSpace(cfg.EmployeeID))
 	var keys []string
 	for k := range cfg.MultiagentBotUserIDs {
 		uid := strings.TrimSpace(cfg.MultiagentBotUserIDs[k])
@@ -67,6 +71,9 @@ func substituteSquadAtMentions(s string, cfg *config.Config) string {
 	sort.Slice(keys, func(i, j int) bool { return len(keys[i]) > len(keys[j]) })
 	out := s
 	for _, key := range keys {
+		if selfKey != "" && strings.EqualFold(key, selfKey) {
+			continue
+		}
 		uid := strings.TrimSpace(cfg.MultiagentBotUserIDs[key])
 		if uid == "" {
 			continue
@@ -76,4 +83,34 @@ func substituteSquadAtMentions(s string, cfg *config.Config) string {
 		out = re.ReplaceAllString(out, token)
 	}
 	return out
+}
+
+var reCollapseSpaces = regexp.MustCompile(`[ \t]{2,}`)
+
+// stripOutgoingSelfMentions removes pings to this bot: plain @employee_id and Slack tokens <@U…> (optional |label).
+func stripOutgoingSelfMentions(s string, cfg *config.Config, selfSlackUserID string) string {
+	if cfg == nil {
+		return s
+	}
+	selfKey := strings.ToLower(strings.TrimSpace(cfg.EmployeeID))
+	if selfKey == "" {
+		return s
+	}
+	out := s
+	uid := strings.TrimSpace(selfSlackUserID)
+	if uid == "" && len(cfg.MultiagentBotUserIDs) > 0 {
+		uid = strings.TrimSpace(cfg.MultiagentBotUserIDs[selfKey])
+	}
+	if uid != "" {
+		reTok := regexp.MustCompile(`<@` + regexp.QuoteMeta(uid) + `(?:\|[^>]+)?>`)
+		out = reTok.ReplaceAllString(out, "")
+	}
+	rePlain := regexp.MustCompile(`(?i)@` + regexp.QuoteMeta(selfKey) + `\b`)
+	out = rePlain.ReplaceAllString(out, "")
+	out = reCollapseSpaces.ReplaceAllString(out, " ")
+	out = strings.ReplaceAll(out, " ,", ",")
+	out = strings.ReplaceAll(out, " .", ".")
+	out = strings.ReplaceAll(out, " ?", "?")
+	out = strings.ReplaceAll(out, " !", "!")
+	return strings.TrimSpace(out)
 }

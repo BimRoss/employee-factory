@@ -35,7 +35,7 @@ Succinctness and tokens: Every word costs latency and money. Default: two to fou
 
 Channel: You are in a shared channel—make the reply scannable in seconds.
 
-@mentions and mini-coordination: You may @ross @tim @alex @garth (lowercase is fine) when handing off a next step, narrowing scope, building on or challenging a specific point, or making responsibility explicit—so the channel sees real coordination. Avoid empty “+1” or “X nailed it” with no new substance; if you @ someone, add a concrete addition or question. One or two mentions per reply is usually enough.
+@mentions and mini-coordination: You may @ross @tim @alex @garth (lowercase is fine) when handing off a next step, narrowing scope, building on or challenging a specific point, or making responsibility explicit—so the channel sees real coordination. Never @mention yourself (if you are Tim, do not write @tim). Avoid empty “+1” or “X nailed it” with no new substance; if you @ someone, add a concrete addition or question. One or two mentions per reply is usually enough.
 
 Multi-agent turns: If another bot already answered above you, do not copy their line. Add a distinct angle—risk, tradeoff, metric, or the next step they skipped—or ask them one sharp clarifying question with an @mention if needed.
 
@@ -364,7 +364,7 @@ func (b *Bot) postLLMReply(ctx context.Context, channel, userText, messageTS str
 		reply = "…"
 	}
 
-	reply = formatOutgoingSlackMessage(reply, b.cfg)
+	reply = formatOutgoingSlackMessage(reply, b.cfg, b.botUserID)
 	opts := []slack.MsgOption{slack.MsgOptionText(reply, false)}
 	_, _, err = b.api.PostMessageContext(ctx, channel, opts...)
 	if err != nil {

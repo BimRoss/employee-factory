@@ -349,7 +349,7 @@ func (b *Bot) postMultiagentReply(ctx context.Context, channel, userPayload stri
 	if b.cfg.MultiagentConfigured() {
 		p := b.cfg.MultiagentHandoffProbability
 		if rand.Float64() < p {
-			suffix += "\n\nHand-off cue for this turn: include one @mention of another squad member (@ross/@tim/@alex/@garth) with a concrete question or next step."
+			suffix += "\n\nHand-off cue for this turn: include one @mention of another squad member—not yourself (@ross/@tim/@alex/@garth) with a concrete question or next step."
 		} else {
 			suffix += "\n\nHand-off cue for this turn: keep this reply self-contained; do not @mention squad members unless strictly necessary."
 		}
@@ -373,7 +373,7 @@ func (b *Bot) postMultiagentReply(ctx context.Context, channel, userPayload stri
 		reply = "…"
 	}
 
-	reply = formatOutgoingSlackMessage(reply, b.cfg)
+	reply = formatOutgoingSlackMessage(reply, b.cfg, b.botUserID)
 	opts := []slack.MsgOption{slack.MsgOptionText(reply, false)}
 	_, _, err = b.api.PostMessageContext(ctx, channel, opts...)
 	if err != nil {
