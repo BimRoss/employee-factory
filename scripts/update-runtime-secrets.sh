@@ -6,7 +6,8 @@ set -euo pipefail
 #
 # Secret SECRET_NAME (default employee-factory-<EMPLOYEE_ID>-runtime)
 # Keys: LLM_API_KEY, SLACK_BOT_TOKEN, SLACK_APP_TOKEN; optional SLACK_USER_TOKEN, MULTIAGENT_BOT_USER_IDS, and LLM_MODEL
-# With EMPLOYEE_ID set, also reads {ID}_OPENROUTER_API_KEY / {ID}_OPENROUTER_KEY / {ID}_CHUTES_KEY, {ID}_MODEL, and {ID}_SLACK_*.
+# LLM key resolution (first non-empty): LLM_API_KEY, OPENROUTER_API_KEY, OPENROUTER_KEY, then
+# {ID}_OPENROUTER_API_KEY / {ID}_OPENROUTER_KEY / {ID}_CHUTES_KEY, ALEX_* fallbacks, {ID}_MODEL, and {ID}_SLACK_*.
 #
 # Usage:
 #   ./scripts/update-runtime-secrets.sh
@@ -140,6 +141,9 @@ if [[ -z "${LLM_KEY}" ]]; then
   LLM_KEY="${OPENROUTER_API_KEY:-}"
 fi
 if [[ -z "${LLM_KEY}" ]]; then
+  LLM_KEY="${OPENROUTER_KEY:-}"
+fi
+if [[ -z "${LLM_KEY}" ]]; then
   LLM_KEY="${!OPENROUTER_API_VAR:-}"
 fi
 if [[ -z "${LLM_KEY}" ]]; then
@@ -150,6 +154,9 @@ if [[ -z "${LLM_KEY}" ]]; then
 fi
 if [[ -z "${LLM_KEY}" && "${EMPLOYEE_ID}" == "alex" ]]; then
   LLM_KEY="${ALEX_OPENROUTER_API_KEY:-}"
+fi
+if [[ -z "${LLM_KEY}" && "${EMPLOYEE_ID}" == "alex" ]]; then
+  LLM_KEY="${ALEX_OPENROUTER_KEY:-}"
 fi
 if [[ -z "${LLM_KEY}" && "${EMPLOYEE_ID}" == "alex" ]]; then
   LLM_KEY="${ALEX_CHUTES_KEY:-}"
@@ -180,7 +187,7 @@ if [[ -z "${USER}" && "${EMPLOYEE_ID}" == "alex" ]]; then
 fi
 
 if [[ -z "${LLM_KEY}" || -z "${BOT}" || -z "${APP}" ]]; then
-  echo "need LLM_API_KEY/OPENROUTER_API_KEY or ${EMP_PREFIX}_OPENROUTER_API_KEY/${EMP_PREFIX}_OPENROUTER_KEY/${EMP_PREFIX}_CHUTES_KEY, and Slack tokens (${EMP_PREFIX}_SLACK_* or SLACK_*)" >&2
+  echo "need LLM_API_KEY, OPENROUTER_API_KEY, or OPENROUTER_KEY (or ${EMP_PREFIX}_OPENROUTER_* / ${EMP_PREFIX}_CHUTES_KEY), and Slack tokens (${EMP_PREFIX}_SLACK_* or SLACK_*)" >&2
   exit 1
 fi
 

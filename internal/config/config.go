@@ -98,7 +98,7 @@ type Config struct {
 }
 
 // Load reads environment variables. Canonical keys (LLM_*, SLACK_*) take precedence;
-// if unset and EMPLOYEE_ID is set, falls back to {EMPLOYEE_ID}_OPENROUTER_API_KEY / _CHUTES_KEY / _MODEL style keys.
+// if unset and EMPLOYEE_ID is set, falls back to OPENROUTER_KEY / {EMPLOYEE_ID}_OPENROUTER_API_KEY / _OPENROUTER_KEY / _CHUTES_KEY / _MODEL style keys.
 // LLM model: LLM_MODEL, then {EMPLOYEE}_MODEL (e.g. ALEX_MODEL when id is alex), else ALEX_MODEL only if EMPLOYEE_ID is unset, else default OpenRouter model.
 func Load() (*Config, error) {
 	_ = os.Getenv("SKIP_DOTENV") // documented no-op if caller loads dotenv first
@@ -125,10 +125,12 @@ func Load() (*Config, error) {
 		LLMAPIKey: strings.TrimSpace(firstNonEmpty(
 			os.Getenv("LLM_API_KEY"),
 			os.Getenv("OPENROUTER_API_KEY"),
+			os.Getenv("OPENROUTER_KEY"),
 			employeePrefixed(empID, "OPENROUTER_API_KEY"),
 			employeePrefixed(empID, "OPENROUTER_KEY"),
 			employeePrefixed(empID, "CHUTES_KEY"),
 			os.Getenv("ALEX_OPENROUTER_API_KEY"),
+			os.Getenv("ALEX_OPENROUTER_KEY"),
 			os.Getenv("ALEX_CHUTES_KEY"),
 		)),
 		LLMSystemMaxRunes: parseIntEnvSigned("LLM_SYSTEM_MAX_RUNES", 48000),
@@ -175,7 +177,7 @@ func Load() (*Config, error) {
 	}
 
 	if cfg.LLMAPIKey == "" {
-		return nil, fmt.Errorf("set LLM_API_KEY/OPENROUTER_API_KEY, or %s_OPENROUTER_API_KEY/%s_CHUTES_KEY, or ALEX_OPENROUTER_API_KEY/ALEX_CHUTES_KEY for local Alex", strings.ToUpper(empID), strings.ToUpper(empID))
+		return nil, fmt.Errorf("set LLM_API_KEY, OPENROUTER_API_KEY, or OPENROUTER_KEY (or %s_OPENROUTER_* / %s_CHUTES_KEY, or ALEX_OPENROUTER_* / ALEX_CHUTES_KEY for local Alex)", strings.ToUpper(empID), strings.ToUpper(empID))
 	}
 	if cfg.SlackBotToken == "" {
 		return nil, fmt.Errorf("set SLACK_BOT_TOKEN or employee-prefixed _SLACK_BOT_TOKEN")

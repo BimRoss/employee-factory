@@ -58,5 +58,5 @@ Phase 1 adds only ConfigMap keys; runtime Secrets stay the same.
 
 - `scripts/update-runtime-secrets.sh` syncs one employee runtime Secret from local `.env` (`EMPLOYEE_ID=alex|tim|ross|garth`).
 - `scripts/update-all-runtime-secrets.sh` syncs all four runtime Secrets in one pass.
-- Synced keys include `LLM_API_KEY` (or `OPENROUTER_API_KEY` alias), `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`, optional `SLACK_USER_TOKEN`, optional `LLM_MODEL`, and `MULTIAGENT_BOT_USER_IDS`.
+- Synced keys include `LLM_API_KEY`, or `OPENROUTER_API_KEY` / `OPENROUTER_KEY` (written into Secret as `LLM_API_KEY`), `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`, optional `SLACK_USER_TOKEN`, optional `LLM_MODEL`, and `MULTIAGENT_BOT_USER_IDS`.
 - `MULTIAGENT_BOT_USER_IDS` auto-resolves from each bot token via Slack `auth.test` (order from `MULTIAGENT_ORDER`, default `ross,tim,alex,garth`) unless explicitly provided.
