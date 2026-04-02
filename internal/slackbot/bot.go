@@ -191,6 +191,9 @@ func (b *Bot) onMessage(ctx context.Context, ev *slackevents.MessageEvent) {
 	if b.dispatchBroadcastMultiagent(ctx, channel, rawText, ev.TimeStamp) {
 		return
 	}
+	if b.dispatchGeneralAutoReply(ctx, channel, rawText, ev) {
+		return
+	}
 }
 
 func (b *Bot) onAppMention(ctx context.Context, ev *slackevents.AppMentionEvent) {
@@ -344,6 +347,50 @@ func (b *Bot) dispatchBroadcastMultiagent(ctx context.Context, channel, rawText 
 	}
 	go b.runMultiagentSession(ctx, channel, rawText, messageTS, participants, rounds, effectiveHandoff)
 	return true
+}
+
+// dispatchGeneralAutoReply handles plain #general messages (no explicit bot mentions)
+// by deterministically selecting one squad participant and posting a single reply.
+func (b *Bot) dispatchGeneralAutoReply(ctx context.Context, channel, rawText string, ev *slackevents.MessageEvent) bool {
+	if ev == nil || b.cfg == nil {
+		return false
+	}
+	if !generalAutoReplyEligible(b.cfg, channel, ev.User) {
+		return false
+	}
+	anchorTS := strings.TrimSpace(ev.TimeStamp)
+	if anchorTS == "" {
+		return false
+	}
+	if !shouldTriggerGeneralAutoReply(
+		anchorTS,
+		b.cfg.MultiagentOrder,
+		b.cfg.MultiagentShuffleSecret,
+		b.cfg.MultiagentGeneralAutoReplyProbability,
+	) {
+		return false
+	}
+	winner := selectSingleGeneralParticipant(anchorTS, b.cfg.MultiagentOrder, b.cfg.MultiagentShuffleSecret)
+	if winner == "" {
+		return false
+	}
+	if strings.ToLower(strings.TrimSpace(b.cfg.EmployeeID)) != winner {
+		return false
+	}
+	b.postLLMReply(ctx, channel, rawText, anchorTS)
+	return true
+}
+
+func generalAutoReplyEligible(cfg *config.Config, channel, userID string) bool {
+	if cfg == nil || !cfg.MultiagentConfigured() || !cfg.MultiagentGeneralAutoReplyEnabled {
+		return false
+	}
+	generalChannel := strings.TrimSpace(cfg.SlackGeneralChannelID)
+	allowedUser := strings.TrimSpace(cfg.ChatAllowedUserID)
+	if generalChannel == "" || allowedUser == "" {
+		return false
+	}
+	return strings.TrimSpace(channel) == generalChannel && strings.TrimSpace(userID) == allowedUser
 }
 
 func (b *Bot) postLLMReply(ctx context.Context, channel, userText, messageTS string) {

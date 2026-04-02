@@ -170,6 +170,47 @@ func TestShouldUseBroadcastBranchMode_bounds(t *testing.T) {
 	}
 }
 
+func TestShouldTriggerGeneralAutoReply_deterministic(t *testing.T) {
+	order := []string{"ross", "tim", "alex", "garth"}
+	a := shouldTriggerGeneralAutoReply("1743491234.567890", order, "secret", 0.4)
+	b := shouldTriggerGeneralAutoReply("1743491234.567890", order, "secret", 0.4)
+	if a != b {
+		t.Fatalf("expected deterministic result for same anchor/secret/order: %v vs %v", a, b)
+	}
+}
+
+func TestShouldTriggerGeneralAutoReply_bounds(t *testing.T) {
+	order := []string{"ross", "tim"}
+	if shouldTriggerGeneralAutoReply("1743491234.567890", order, "secret", 0.0) {
+		t.Fatal("probability 0 should never trigger")
+	}
+	if !shouldTriggerGeneralAutoReply("1743491234.567890", order, "secret", 1.0) {
+		t.Fatal("probability 1 should always trigger")
+	}
+}
+
+func TestSelectSingleGeneralParticipant_deterministic(t *testing.T) {
+	order := []string{"ross", "tim", "alex", "garth"}
+	a := selectSingleGeneralParticipant("1743491234.567890", order, "secret")
+	b := selectSingleGeneralParticipant("1743491234.567890", order, "secret")
+	if a != b {
+		t.Fatalf("same anchor should pick same winner: %q vs %q", a, b)
+	}
+	if a == "" {
+		t.Fatal("expected non-empty winner")
+	}
+}
+
+func TestSelectSingleGeneralParticipant_changesWithInputs(t *testing.T) {
+	order := []string{"ross", "tim", "alex", "garth"}
+	a := selectSingleGeneralParticipant("1743491234.567890", order, "")
+	b := selectSingleGeneralParticipant("1743491234.567891", order, "")
+	c := selectSingleGeneralParticipant("1743491234.567890", order, "salt")
+	if a == b && a == c {
+		t.Fatalf("expected anchor or secret change to alter winner at least once: a=%q b=%q c=%q", a, b, c)
+	}
+}
+
 func TestMixedEveryoneAndSingleMention_parsing(t *testing.T) {
 	cfg := testCfgSquad()
 	raw := "<!everyone> quick take from <@UALEX003>"

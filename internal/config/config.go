@@ -80,8 +80,12 @@ type Config struct {
 	// ThreadsEnabled when ChatAllowedUserID and SlackChatChannelID are both non-empty.
 	ChatAllowedUserID  string // Slack user id of the only human who may drive thread sessions
 	SlackChatChannelID string // e.g. C01234567 — thread routing only in this channel
-	RedisURL           string // for persisting thread owner on human-root threads; optional but required for that case
-	ThreadOwnerTTLSec  int    // Redis TTL for owner key (default 30d)
+	// General auto-reply (non-mention plain messages): single deterministic squad winner.
+	SlackGeneralChannelID                 string  // e.g. C0GENERAL — plain-message random auto-reply channel gate
+	MultiagentGeneralAutoReplyEnabled     bool    // enable plain-message auto-reply selector
+	MultiagentGeneralAutoReplyProbability float64 // deterministic trigger chance [0..1] per qualifying message
+	RedisURL                              string  // for persisting thread owner on human-root threads; optional but required for that case
+	ThreadOwnerTTLSec                     int     // Redis TTL for owner key (default 30d)
 
 	LLMChannelIncludeThreads   bool // enrich main-channel context with recent thread reply snippets
 	LLMChannelThreadParentScan int  // how many recent top-level messages to scan for reply_count (default 4)
@@ -118,10 +122,10 @@ func Load() (*Config, error) {
 	}
 
 	cfg := &Config{
-		EmployeeID:        empID,
-		HTTPAddr:          getEnv("HTTP_ADDR", ":8080"),
-		LLMBaseURL:        getEnv("LLM_BASE_URL", "https://openrouter.ai/api/v1"),
-		LLMModel:          llmModel,
+		EmployeeID: empID,
+		HTTPAddr:   getEnv("HTTP_ADDR", ":8080"),
+		LLMBaseURL: getEnv("LLM_BASE_URL", "https://openrouter.ai/api/v1"),
+		LLMModel:   llmModel,
 		LLMAPIKey: strings.TrimSpace(firstNonEmpty(
 			os.Getenv("LLM_API_KEY"),
 			os.Getenv("OPENROUTER_API_KEY"),
@@ -152,15 +156,18 @@ func Load() (*Config, error) {
 		PersonaReloadMS:           parseIntEnv("PERSONA_RELOAD_MS", 60000),
 		// Canonical: CHAT_ALLOWED_USER_ID, SLACK_CHAT_CHANNEL_ID. Aliases for local/.env convenience:
 		// SLACK_CEO_USER_ID, SLACK_CHANNEL_ID (first non-empty wins in firstNonEmpty order).
-		ChatAllowedUserID:          strings.TrimSpace(firstNonEmpty(os.Getenv("CHAT_ALLOWED_USER_ID"), os.Getenv("SLACK_CEO_USER_ID"))),
-		SlackChatChannelID:         strings.TrimSpace(firstNonEmpty(os.Getenv("SLACK_CHAT_CHANNEL_ID"), os.Getenv("SLACK_CHANNEL_ID"))),
-		RedisURL:                   strings.TrimSpace(os.Getenv("REDIS_URL")),
-		ThreadOwnerTTLSec:          parseIntEnvMin("THREAD_OWNER_TTL_SEC", 30*24*3600, 60),
-		LLMChannelIncludeThreads:   parseBoolEnv("LLM_CHANNEL_INCLUDE_THREADS", false),
-		LLMChannelThreadParentScan: parseIntEnvMin("LLM_CHANNEL_THREAD_PARENT_SCAN", 4, 1),
-		LLMChannelThreadRepliesMax: parseIntEnvMin("LLM_CHANNEL_THREAD_REPLIES_MAX", 15, 1),
-		LLMContextWeightDecay:      parseFloat64EnvClamp("LLM_CONTEXT_WEIGHT_DECAY", 0.5, 0.1, 1.0),
-		LLMContextWeightWindow:     parseIntEnvMin("LLM_CONTEXT_WEIGHT_WINDOW", 3, 1),
+		ChatAllowedUserID:                     strings.TrimSpace(firstNonEmpty(os.Getenv("CHAT_ALLOWED_USER_ID"), os.Getenv("SLACK_CEO_USER_ID"))),
+		SlackChatChannelID:                    strings.TrimSpace(firstNonEmpty(os.Getenv("SLACK_CHAT_CHANNEL_ID"), os.Getenv("SLACK_CHANNEL_ID"))),
+		SlackGeneralChannelID:                 strings.TrimSpace(os.Getenv("SLACK_GENERAL_CHANNEL_ID")),
+		MultiagentGeneralAutoReplyEnabled:     parseBoolEnv("MULTIAGENT_GENERAL_AUTO_REPLY_ENABLED", false),
+		MultiagentGeneralAutoReplyProbability: parseFloat64EnvClamp("MULTIAGENT_GENERAL_AUTO_REPLY_PROBABILITY", 0.4, 0, 1),
+		RedisURL:                              strings.TrimSpace(os.Getenv("REDIS_URL")),
+		ThreadOwnerTTLSec:                     parseIntEnvMin("THREAD_OWNER_TTL_SEC", 30*24*3600, 60),
+		LLMChannelIncludeThreads:              parseBoolEnv("LLM_CHANNEL_INCLUDE_THREADS", false),
+		LLMChannelThreadParentScan:            parseIntEnvMin("LLM_CHANNEL_THREAD_PARENT_SCAN", 4, 1),
+		LLMChannelThreadRepliesMax:            parseIntEnvMin("LLM_CHANNEL_THREAD_REPLIES_MAX", 15, 1),
+		LLMContextWeightDecay:                 parseFloat64EnvClamp("LLM_CONTEXT_WEIGHT_DECAY", 0.5, 0.1, 1.0),
+		LLMContextWeightWindow:                parseIntEnvMin("LLM_CONTEXT_WEIGHT_WINDOW", 3, 1),
 	}
 
 	if err := parseMultiagentEnv(cfg); err != nil {

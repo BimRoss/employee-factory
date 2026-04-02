@@ -19,6 +19,16 @@ For `@everyone` triggers (no individual bot `@mention`), each squad pod receives
 - **`MULTIAGENT_BROADCAST_HANDOFF_PROBABILITY`** (default `0.5`) still controls broadcast intensity, but each reply uses bounded randomness before deciding the final `@mention`.
 - **Deterministic branch mode**: with `MULTIAGENT_BROADCAST_BRANCHING_ENABLED=true`, each `<!everyone>` trigger deterministically flips into branch mode using `MULTIAGENT_BROADCAST_BRANCHING_PROBABILITY` (default `0.5`). Branch mode uses `MULTIAGENT_BROADCAST_BRANCHING_HANDOFF_PROBABILITY` (default `1.0`) to produce richer cross-agent follow-ons while keeping ordering stable across pods.
 
+## Plain `#general` auto-reply (single random agent)
+
+When a plain (no-bot-mention, no `<!everyone>`) message is posted in `#general`, the squad can auto-reply as one agent:
+
+- Enable with `MULTIAGENT_GENERAL_AUTO_REPLY_ENABLED=true`.
+- Gate the channel with `SLACK_GENERAL_CHANNEL_ID`.
+- Trigger user is `CHAT_ALLOWED_USER_ID` (Grant-only by policy).
+- Trigger chance is deterministic per message via `MULTIAGENT_GENERAL_AUTO_REPLY_PROBABILITY` (default `0.4`).
+- Winner selection is deterministic across pods from message timestamp + `MULTIAGENT_ORDER` + optional `MULTIAGENT_SHUFFLE_SECRET`, so exactly one bot responds.
+
 ### Turn quality policy (runtime-enforced prompt block)
 
 During multi-agent sessions, each slot now receives an explicit policy block before LLM generation:
