@@ -280,7 +280,7 @@ func (b *Bot) postLLMReplyInThread(ctx context.Context, channel, userText, messa
 	if err != nil {
 		log.Printf("llm reply error: %v", err)
 		opts := []slack.MsgOption{
-			slack.MsgOptionText("Sorry, I hit an error generating a reply.", false),
+			slack.MsgOptionText(llmErrorUserMessage(err), false),
 			slack.MsgOptionTS(threadTS),
 		}
 		if _, _, err := b.api.PostMessageContext(ctx, channel, opts...); err != nil {

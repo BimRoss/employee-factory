@@ -8,7 +8,7 @@ import (
 )
 
 // DefaultChutesModel is used when LLM_MODEL is unset and matches the default Chutes base URL.
-const DefaultChutesModel = "kimi-k2.5-tee"
+const DefaultChutesModel = "deepseek-ai/DeepSeek-V3.1-TEE"
 
 // Config holds runtime settings for one employee instance.
 type Config struct {
