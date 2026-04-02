@@ -458,10 +458,14 @@ func (b *Bot) channelHistoryContextBlock(ctx context.Context, channelID, current
 			continue
 		}
 		role := "user"
-		if m.BotID != "" || m.User == b.botUserID {
+		isBotLike := m.BotID != "" || m.User == b.botUserID
+		if sk, ok := squadKeyForSlackUser(b.cfg, m.User); ok {
+			role = sk
+			isBotLike = true
+		} else if isBotLike {
 			role = "assistant"
 		}
-		if role == "assistant" && isOperationalModelErrorLine(text) {
+		if isBotLike && isOperationalModelErrorLine(text) {
 			continue
 		}
 		entries = append(entries, historyLine{role: role, text: text})
