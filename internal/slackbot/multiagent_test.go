@@ -3,6 +3,7 @@ package slackbot
 import (
 	"math"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/bimross/employee-factory/internal/config"
@@ -143,8 +144,14 @@ func TestBroadcastMultiagentTrigger(t *testing.T) {
 	if !broadcastMultiagentTrigger("<!everyone> hi") {
 		t.Fatal("everyone token")
 	}
-	if broadcastMultiagentTrigger("x <!channel|@channel> y") {
-		t.Fatal("channel token should not trigger broadcast")
+	if !broadcastMultiagentTrigger("x <!channel|@channel> y") {
+		t.Fatal("channel token should trigger broadcast")
+	}
+	if !broadcastMultiagentTrigger("x @channel y") {
+		t.Fatal("plain @channel should trigger broadcast")
+	}
+	if !broadcastMultiagentTrigger("x @everyone y") {
+		t.Fatal("plain @everyone should trigger broadcast")
 	}
 	if broadcastMultiagentTrigger("Hey everyone") {
 		t.Fatal("plain everyone text does not start broadcast (only coordinator + Slack tokens)")
@@ -221,6 +228,9 @@ func TestMixedEveryoneAndSingleMention_parsing(t *testing.T) {
 	if len(got) != 1 || got[0] != "alex" {
 		t.Fatalf("expected single targeted mention preserved, got %v", got)
 	}
+	if !shouldRouteAsBroadcast(raw, cfg) {
+		t.Fatal("expected routing precedence to prefer broadcast in mixed summon messages")
+	}
 }
 
 func TestStripSquadUserMentions(t *testing.T) {
@@ -247,6 +257,23 @@ func TestPrefixMatchesSquadSlots(t *testing.T) {
 	}
 	if !prefixMatchesSquadSlots(nil, slots, 0) {
 		t.Fatal("k=0 empty ok")
+	}
+}
+
+func TestFormatPriorSquadTurns_weightedAndBounded(t *testing.T) {
+	slots := []string{"U1", "U2", "U3"}
+	idToKey := map[string]string{"U1": "ross", "U2": "tim", "U3": "alex"}
+	msgs := []slack.Message{
+		{Msg: slack.Msg{User: "U1", Text: "first"}},
+		{Msg: slack.Msg{User: "U2", Text: "second"}},
+		{Msg: slack.Msg{User: "U3", Text: "third"}},
+	}
+	out := formatPriorSquadTurns(slots, 3, msgs, idToKey, 120, 0.5, 3)
+	if !strings.Contains(out, "[w=1.00]") || !strings.Contains(out, "[w=0.50]") {
+		t.Fatalf("expected weighted markers in prior context, got %q", out)
+	}
+	if len([]rune(out)) > 140 { // account for truncation prefix when capped.
+		t.Fatalf("expected bounded prior context length, got %d runes", len([]rune(out)))
 	}
 }
 

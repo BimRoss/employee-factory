@@ -166,6 +166,7 @@ func (b *Bot) onMessage(ctx context.Context, ev *slackevents.MessageEvent) {
 	}
 	if ts := strings.TrimSpace(ev.ThreadTimeStamp); ts != "" {
 		if b.cfg.ThreadsEnabled() {
+			log.Printf("slack_route: path=thread employee=%s channel=%s thread_ts=%s", strings.TrimSpace(b.cfg.EmployeeID), channel, ts)
 			b.handleThreadMessage(ctx, channel, ev.User, rawText, ev.TimeStamp, ts)
 		}
 		return
@@ -174,7 +175,18 @@ func (b *Bot) onMessage(ctx context.Context, ev *slackevents.MessageEvent) {
 	// Another squad bot @mentioned this bot—organic follow-up (not a second multiagent lap).
 	if ev.BotID != "" {
 		if b.trySquadBotMentionTrigger(ctx, channel, rawText, ev) {
+			log.Printf("slack_route: path=squad_bot_followup employee=%s channel=%s anchor=%s", strings.TrimSpace(b.cfg.EmployeeID), channel, strings.TrimSpace(ev.TimeStamp))
 			return
+		}
+		return
+	}
+
+	// Broadcast is authoritative when mixed with explicit mentions.
+	if shouldRouteAsBroadcast(rawText, b.cfg) {
+		if b.dispatchBroadcastMultiagent(ctx, channel, rawText, ev.TimeStamp) {
+			log.Printf("slack_route: path=broadcast employee=%s channel=%s anchor=%s", strings.TrimSpace(b.cfg.EmployeeID), channel, strings.TrimSpace(ev.TimeStamp))
+		} else {
+			log.Printf("slack_route: path=broadcast_skipped employee=%s channel=%s anchor=%s", strings.TrimSpace(b.cfg.EmployeeID), channel, strings.TrimSpace(ev.TimeStamp))
 		}
 		return
 	}
@@ -182,23 +194,25 @@ func (b *Bot) onMessage(ctx context.Context, ev *slackevents.MessageEvent) {
 	mention := fmt.Sprintf("<@%s>", b.botUserID)
 	if strings.Contains(rawText, mention) {
 		if b.dispatchMultiagentChannel(ctx, channel, rawText, ev.TimeStamp) {
+			log.Printf("slack_route: path=multiagent_mentions employee=%s channel=%s anchor=%s", strings.TrimSpace(b.cfg.EmployeeID), channel, strings.TrimSpace(ev.TimeStamp))
 			return
 		}
 		text := strings.TrimSpace(strings.ReplaceAll(strings.ReplaceAll(rawText, mention, ""), "  ", " "))
 		if text == "" {
 			return
 		}
+		log.Printf("slack_route: path=single_mention employee=%s channel=%s anchor=%s", strings.TrimSpace(b.cfg.EmployeeID), channel, strings.TrimSpace(ev.TimeStamp))
 		b.postLLMReply(ctx, channel, text, ev.TimeStamp)
 		return
 	}
-	// message.channels: @everyone without bot @mentions; each bot runs the same session with a
-	// SHA-256–seeded random turn order (see shuffleBroadcastParticipants) and MULTIAGENT_BROADCAST_ROUNDS passes.
-	if b.dispatchBroadcastMultiagent(ctx, channel, rawText, ev.TimeStamp) {
-		return
-	}
 	if b.dispatchGeneralAutoReply(ctx, channel, rawText, ev) {
+		log.Printf("slack_route: path=general_auto_reply employee=%s channel=%s anchor=%s", strings.TrimSpace(b.cfg.EmployeeID), channel, strings.TrimSpace(ev.TimeStamp))
 		return
 	}
+}
+
+func shouldRouteAsBroadcast(rawText string, cfg *config.Config) bool {
+	return cfg != nil && cfg.MultiagentConfigured() && broadcastMultiagentTrigger(rawText)
 }
 
 func (b *Bot) onAppMention(ctx context.Context, ev *slackevents.AppMentionEvent) {

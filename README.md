@@ -8,11 +8,12 @@ The repo is the source of truth for behavior—read the code and `.env.example` 
 
 Default model is `google/gemini-2.0-flash-001` via OpenRouter (`LLM_BASE_URL` defaults to `https://openrouter.ai/api/v1`; override via `LLM_MODEL` when needed). Chat completions retry on transient provider errors (`429`, `502`, `503`, plus temporary-capacity responses) with exponential backoff. `LLM_FALLBACK_MODEL` is optional and can be left empty for single-model behavior (recommended for this Slack flow). Configure via `LLM_MAX_RETRIES`, `LLM_RETRY_BACKOFF_MS`, and `LLM_FALLBACK_MODEL` (see `.env.example`).
 
-## Multi-agent Slack (`<!everyone>`)
+## Multi-agent Slack (`<!everyone>` / `<!channel>`)
 
-For `@everyone` triggers (no individual bot `@mention`), each squad pod receives the same Events API message and runs a shared **multi-agent session**:
+For channel-wide summons (`@everyone` or `@channel`, Slack tokens `<!everyone>` / `<!channel>`), each squad pod receives the same Events API message and runs a shared **multi-agent session**:
 
 - **Turn order** is a **pseudorandom permutation** of `MULTIAGENT_ORDER`, deterministic per trigger from `SHA-256(anchor message timestamp + NUL + comma-joined order + NUL + optional secret)`. Every pod must use the same `MULTIAGENT_ORDER` and the same optional `MULTIAGENT_SHUFFLE_SECRET` so they agree on who posts first, second, etc.
+- **Mixed summons precedence:** if a message includes both channel-wide summon + explicit bot mention(s), broadcast wins and the full squad turn runs.
 - **Coordination** is **not** Redis: each bot polls `conversations.history` until prior squad messages match the expected slot prefix, then calls the LLM and posts (same as before).
 - **`MULTIAGENT_BROADCAST_ROUNDS`** (default `1`) is how many full passes over that shuffled order to run per trigger (`1` ⇒ each agent replies once).
 - Per-reply handoff chance is sampled inside `MULTIAGENT_HANDOFF_MIN_PROBABILITY..MULTIAGENT_HANDOFF_MAX_PROBABILITY` (defaults `0.25..0.75`) so cross-agent mentions feel organic.
@@ -21,7 +22,7 @@ For `@everyone` triggers (no individual bot `@mention`), each squad pod receives
 
 ## Plain `#general` auto-reply (single random agent)
 
-When a plain (no-bot-mention, no `<!everyone>`) message is posted in `#general`, the squad can auto-reply as one agent:
+When a plain (no-bot-mention, no channel-wide summon) message is posted in `#general`, the squad can auto-reply as one agent:
 
 - Enable with `MULTIAGENT_GENERAL_AUTO_REPLY_ENABLED=true`.
 - Gate the channel with `SLACK_GENERAL_CHANNEL_ID`.

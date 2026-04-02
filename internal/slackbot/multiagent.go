@@ -21,6 +21,7 @@ import (
 
 var (
 	reSlackUserMention = regexp.MustCompile(`<@(U[A-Za-z0-9]+)>`)
+	reBroadcastAlias   = regexp.MustCompile(`(?i)(?:^|\s)@(everyone|channel)\b`)
 )
 
 // mentionedSquadKeys returns squad employee keys mentioned in raw Slack text, in MULTIAGENT_ORDER.
@@ -160,11 +161,15 @@ func selectSingleGeneralParticipant(anchorTS string, order []string, secret stri
 	return order[idx]
 }
 
-// broadcastMultiagentTrigger is true only for Slack <!everyone>.
+// broadcastMultiagentTrigger is true for Slack channel-wide broadcast forms:
+// <!everyone>, <!channel>, and plain @everyone/@channel mentions.
 // Used when no bot is @mentioned — each squad bot starts runMultiagentSession; each posts only its own slots.
 func broadcastMultiagentTrigger(rawText string) bool {
 	lower := strings.ToLower(rawText)
-	return strings.Contains(lower, "<!everyone")
+	if strings.Contains(lower, "<!everyone") || strings.Contains(lower, "<!channel") {
+		return true
+	}
+	return reBroadcastAlias.MatchString(rawText)
 }
 
 // buildSlots repeats ordered participant keys for each round; returns Slack user IDs per slot.
@@ -399,7 +404,11 @@ func (b *Bot) runMultiagentSession(ctx context.Context, channel, rawText string,
 		msgs, err := b.waitUntilSlot(waitCtx, channel, anchorTS, slots, k, poll)
 		cancel()
 		if err != nil {
-			log.Printf("multiagent: slot %d wait failed (employee=%s): %v", k, b.cfg.EmployeeID, err)
+			if strings.Contains(err.Error(), "missing_prior_slot") {
+				log.Printf("multiagent: missing_prior_slot employee=%s anchor=%s slot=%d err=%v", b.cfg.EmployeeID, anchorTS, k, err)
+			} else {
+				log.Printf("multiagent: slot %d wait failed (employee=%s): %v", k, b.cfg.EmployeeID, err)
+			}
 			return
 		}
 
@@ -439,6 +448,11 @@ func (b *Bot) waitUntilSlot(ctx context.Context, channelID, parentTS string, slo
 	k := slotIndex
 	start := time.Now()
 	attempts := 0
+	lastSeen := -1
+	noProgressPolls := 0
+	prefixMismatchPolls := 0
+	const maxNoProgressPolls = 45
+	const maxPrefixMismatchPolls = 6
 	for {
 		attempts++
 		msgs, err := b.squadMessagesInChannelAfter(ctx, channelID, parentTS)
@@ -452,6 +466,34 @@ func (b *Bot) waitUntilSlot(ctx context.Context, channelID, parentTS string, slo
 			log.Printf("multiagent: slot ready employee=%s slot=%d wait=%v polls=%d prior_squad_msgs=%d",
 				b.cfg.EmployeeID, k, time.Since(start), attempts, len(msgs))
 			return msgs, nil
+		}
+		if len(msgs) == lastSeen {
+			noProgressPolls++
+		} else {
+			noProgressPolls = 0
+			lastSeen = len(msgs)
+		}
+		if len(msgs) >= k && !prefixMatchesSquadSlots(msgs, slots, k) {
+			prefixMismatchPolls++
+		} else {
+			prefixMismatchPolls = 0
+		}
+		if prefixMismatchPolls >= maxPrefixMismatchPolls {
+			expected := ""
+			if k > 0 && k-1 < len(slots) {
+				expected = slots[k-1]
+			}
+			return nil, fmt.Errorf("missing_prior_slot anchor=%s slot=%d expected_agent=%s observed_prior=%d reason=prefix_mismatch polls=%d",
+				parentTS, k, expected, len(msgs), attempts)
+		}
+		if len(msgs) < k && noProgressPolls >= maxNoProgressPolls {
+			expected := ""
+			next := len(msgs)
+			if next >= 0 && next < len(slots) {
+				expected = slots[next]
+			}
+			return nil, fmt.Errorf("missing_prior_slot anchor=%s slot=%d expected_agent=%s observed_prior=%d reason=no_progress polls=%d",
+				parentTS, k, expected, len(msgs), attempts)
 		}
 		select {
 		case <-ctx.Done():
