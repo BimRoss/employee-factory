@@ -41,6 +41,19 @@ func TestLLMErrorUserMessage(t *testing.T) {
 			err:  errors.New("boom"),
 			want: "Please retry once",
 		},
+		{
+			name: "http 413 from APIError",
+			err: &openai.APIError{
+				HTTPStatusCode: 413,
+				Message:        "too large",
+			},
+			want: "too large for the provider (413)",
+		},
+		{
+			name: "status code embedded in string only",
+			err:  errors.New(`error, status code: 502, status: , message: upstream`),
+			want: "temporarily unavailable",
+		},
 	}
 
 	for _, tc := range tests {

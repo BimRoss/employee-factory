@@ -278,7 +278,7 @@ func (b *Bot) postLLMReplyInThread(ctx context.Context, channel, userText, messa
 
 	reply, err := b.llm.Reply(ctx, persona, slackReplySuffix, userText)
 	if err != nil {
-		log.Printf("llm reply error: %v", err)
+		log.Printf("llm reply error (employee=%s): %v", strings.TrimSpace(b.cfg.EmployeeID), err)
 		opts := []slack.MsgOption{
 			slack.MsgOptionText(llmErrorUserMessage(err), false),
 			slack.MsgOptionTS(threadTS),
