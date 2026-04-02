@@ -397,16 +397,22 @@ func (b *Bot) dispatchGeneralAutoReply(ctx context.Context, channel, rawText str
 	log.Printf("general_auto_reply: candidate employee=%s winner=%s anchor=%s", selfKey, winner, anchorTS)
 	if selfKey == winner {
 		claimant := "winner:" + selfKey
-		if !b.tryGeneralAutoReplyClaim(ctx, channel, anchorTS, claimant) {
-			log.Printf("general_auto_reply: winner_claim_missed employee=%s anchor=%s", selfKey, anchorTS)
+		status := b.tryGeneralAutoReplyClaim(ctx, channel, anchorTS, claimant)
+		if !generalAutoReplyWinnerShouldPost(status) {
+			log.Printf("general_auto_reply: winner_claim_missed employee=%s anchor=%s claim_status=%s", selfKey, anchorTS, status)
 			return false
 		}
+		if status == generalAutoReplyClaimBackendDown {
+			log.Printf("general_auto_reply: winner_fallback_without_claim employee=%s anchor=%s", selfKey, anchorTS)
+		}
 		if b.postLLMReplyWithResult(ctx, channel, rawText, anchorTS) {
-			log.Printf("general_auto_reply: posted employee=%s path=winner anchor=%s", selfKey, anchorTS)
+			log.Printf("general_auto_reply: posted employee=%s path=winner anchor=%s claim_status=%s", selfKey, anchorTS, status)
 			return true
 		}
-		log.Printf("general_auto_reply: post_failed employee=%s path=winner anchor=%s", selfKey, anchorTS)
-		b.releaseGeneralAutoReplyClaim(ctx, channel, anchorTS, claimant)
+		log.Printf("general_auto_reply: post_failed employee=%s path=winner anchor=%s claim_status=%s", selfKey, anchorTS, status)
+		if status == generalAutoReplyClaimAcquired {
+			b.releaseGeneralAutoReplyClaim(ctx, channel, anchorTS, claimant)
+		}
 		return false
 	}
 	if b.generalAutoReplyLock == nil {
@@ -454,28 +460,39 @@ func (b *Bot) tryGeneralAutoReplyFailover(ctx context.Context, channel, rawText,
 		}
 	}
 	claimant := "failover:" + selfKey
-	if !b.tryGeneralAutoReplyClaim(ctx, channel, anchorTS, claimant) {
-		log.Printf("general_auto_reply: failover_not_selected employee=%s winner=%s anchor=%s", selfKey, winner, anchorTS)
+	status := b.tryGeneralAutoReplyClaim(ctx, channel, anchorTS, claimant)
+	if !generalAutoReplyFailoverShouldPost(status) {
+		log.Printf("general_auto_reply: failover_not_selected employee=%s winner=%s anchor=%s claim_status=%s", selfKey, winner, anchorTS, status)
 		return
 	}
 	if b.postLLMReplyWithResult(ctx, channel, rawText, anchorTS) {
-		log.Printf("general_auto_reply: posted employee=%s path=failover winner=%s anchor=%s", selfKey, winner, anchorTS)
+		log.Printf("general_auto_reply: posted employee=%s path=failover winner=%s anchor=%s claim_status=%s", selfKey, winner, anchorTS, status)
 		return
 	}
-	log.Printf("general_auto_reply: post_failed employee=%s path=failover winner=%s anchor=%s", selfKey, winner, anchorTS)
+	log.Printf("general_auto_reply: post_failed employee=%s path=failover winner=%s anchor=%s claim_status=%s", selfKey, winner, anchorTS, status)
 	b.releaseGeneralAutoReplyClaim(ctx, channel, anchorTS, claimant)
 }
 
-func (b *Bot) tryGeneralAutoReplyClaim(ctx context.Context, channel, anchorTS, claimant string) bool {
+func (b *Bot) tryGeneralAutoReplyClaim(ctx context.Context, channel, anchorTS, claimant string) generalAutoReplyClaimStatus {
 	if b.generalAutoReplyLock == nil {
-		return strings.HasPrefix(claimant, "winner:")
+		if strings.HasPrefix(claimant, "winner:") {
+			return generalAutoReplyClaimBackendDown
+		}
+		return generalAutoReplyClaimAlreadyClaimed
 	}
-	ok, err := b.generalAutoReplyLock.TryClaim(ctx, channel, anchorTS, claimant, 90*time.Second)
+	status, err := b.generalAutoReplyLock.TryClaim(ctx, channel, anchorTS, claimant, 90*time.Second)
 	if err != nil {
 		log.Printf("general_auto_reply: claim_error claimant=%s channel=%s anchor=%s err=%v", claimant, channel, anchorTS, err)
-		return false
 	}
-	return ok
+	return status
+}
+
+func generalAutoReplyWinnerShouldPost(status generalAutoReplyClaimStatus) bool {
+	return status == generalAutoReplyClaimAcquired || status == generalAutoReplyClaimBackendDown
+}
+
+func generalAutoReplyFailoverShouldPost(status generalAutoReplyClaimStatus) bool {
+	return status == generalAutoReplyClaimAcquired
 }
 
 func (b *Bot) releaseGeneralAutoReplyClaim(ctx context.Context, channel, anchorTS, claimant string) {

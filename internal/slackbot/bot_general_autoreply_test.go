@@ -97,3 +97,27 @@ func TestGeneralAutoReplyFailoverDelay_DeterministicByOrder(t *testing.T) {
 		t.Fatalf("unknown delay mismatch: got=%s", got)
 	}
 }
+
+func TestGeneralAutoReplyWinnerShouldPost(t *testing.T) {
+	if !generalAutoReplyWinnerShouldPost(generalAutoReplyClaimAcquired) {
+		t.Fatal("winner should post when claim acquired")
+	}
+	if !generalAutoReplyWinnerShouldPost(generalAutoReplyClaimBackendDown) {
+		t.Fatal("winner should post when claim backend unavailable")
+	}
+	if generalAutoReplyWinnerShouldPost(generalAutoReplyClaimAlreadyClaimed) {
+		t.Fatal("winner should not post when already claimed")
+	}
+}
+
+func TestGeneralAutoReplyFailoverShouldPost(t *testing.T) {
+	if !generalAutoReplyFailoverShouldPost(generalAutoReplyClaimAcquired) {
+		t.Fatal("failover should post only when claim acquired")
+	}
+	if generalAutoReplyFailoverShouldPost(generalAutoReplyClaimBackendDown) {
+		t.Fatal("failover should not post when claim backend unavailable")
+	}
+	if generalAutoReplyFailoverShouldPost(generalAutoReplyClaimAlreadyClaimed) {
+		t.Fatal("failover should not post when already claimed")
+	}
+}

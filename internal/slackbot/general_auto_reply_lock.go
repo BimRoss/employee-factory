@@ -13,6 +13,14 @@ type generalAutoReplyLocker struct {
 	c *redis.Client
 }
 
+type generalAutoReplyClaimStatus string
+
+const (
+	generalAutoReplyClaimAcquired       generalAutoReplyClaimStatus = "acquired"
+	generalAutoReplyClaimAlreadyClaimed generalAutoReplyClaimStatus = "already_claimed"
+	generalAutoReplyClaimBackendDown    generalAutoReplyClaimStatus = "backend_unavailable"
+)
+
 func newGeneralAutoReplyLocker(redisURL string) *generalAutoReplyLocker {
 	redisURL = strings.TrimSpace(redisURL)
 	if redisURL == "" {
@@ -29,14 +37,21 @@ func (l *generalAutoReplyLocker) key(channelID, anchorTS string) string {
 	return fmt.Sprintf("employee-factory:general_auto_reply:%s:%s", strings.TrimSpace(channelID), strings.TrimSpace(anchorTS))
 }
 
-func (l *generalAutoReplyLocker) TryClaim(ctx context.Context, channelID, anchorTS, claimant string, ttl time.Duration) (bool, error) {
+func (l *generalAutoReplyLocker) TryClaim(ctx context.Context, channelID, anchorTS, claimant string, ttl time.Duration) (generalAutoReplyClaimStatus, error) {
 	if l == nil || l.c == nil {
-		return false, nil
+		return generalAutoReplyClaimBackendDown, nil
 	}
 	if ttl <= 0 {
 		ttl = 90 * time.Second
 	}
-	return l.c.SetNX(ctx, l.key(channelID, anchorTS), claimant, ttl).Result()
+	ok, err := l.c.SetNX(ctx, l.key(channelID, anchorTS), claimant, ttl).Result()
+	if err != nil {
+		return generalAutoReplyClaimBackendDown, err
+	}
+	if ok {
+		return generalAutoReplyClaimAcquired, nil
+	}
+	return generalAutoReplyClaimAlreadyClaimed, nil
 }
 
 func (l *generalAutoReplyLocker) ReleaseIfOwned(ctx context.Context, channelID, anchorTS, claimant string) error {
