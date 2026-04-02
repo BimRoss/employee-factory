@@ -2,6 +2,7 @@ package slackbot
 
 import (
 	"testing"
+	"time"
 
 	"github.com/bimross/employee-factory/internal/config"
 )
@@ -78,5 +79,21 @@ func TestGeneralAutoReplyNoSquadMentions(t *testing.T) {
 
 	if generalAutoReplyNoSquadMentions("what do you think <@UROSS>?", cfg) {
 		t.Fatal("expected explicit squad mention to disable random auto-reply path")
+	}
+}
+
+func TestGeneralAutoReplyFailoverDelay_DeterministicByOrder(t *testing.T) {
+	order := []string{"ross", "tim", "alex", "garth"}
+	if got := generalAutoReplyFailoverDelay("ross", order); got != 5*time.Second {
+		t.Fatalf("ross delay mismatch: got=%s", got)
+	}
+	if got := generalAutoReplyFailoverDelay("tim", order); got != 6*time.Second {
+		t.Fatalf("tim delay mismatch: got=%s", got)
+	}
+	if got := generalAutoReplyFailoverDelay("garth", order); got != 8*time.Second {
+		t.Fatalf("garth delay mismatch: got=%s", got)
+	}
+	if got := generalAutoReplyFailoverDelay("unknown", order); got != 9*time.Second {
+		t.Fatalf("unknown delay mismatch: got=%s", got)
 	}
 }

@@ -58,6 +58,8 @@ type Bot struct {
 
 	// threadOwner persists human-root thread owners when Redis is configured (optional cache).
 	threadOwner threadstore.OwnerStore
+	// generalAutoReplyLock coordinates cross-pod single-response behavior for plain #general messages.
+	generalAutoReplyLock *generalAutoReplyLocker
 }
 
 // New constructs a Socket Mode bot. owner may be nil (human-root owner is inferred from thread history).
@@ -65,13 +67,14 @@ func New(cfg *config.Config, lm *llm.EmployeeLLM, p *persona.Loader, owner threa
 	api := slack.New(cfg.SlackBotToken, slack.OptionAppLevelToken(cfg.SlackAppToken))
 	window := time.Duration(cfg.SlackOutboundWindowSec) * time.Second
 	return &Bot{
-		cfg:         cfg,
-		api:         api,
-		sm:          socketmode.New(api),
-		llm:         lm,
-		persona:     p,
-		outbound:    newOutboundGate(window, cfg.SlackOutboundMaxPerWindow),
-		threadOwner: owner,
+		cfg:                  cfg,
+		api:                  api,
+		sm:                   socketmode.New(api),
+		llm:                  lm,
+		persona:              p,
+		outbound:             newOutboundGate(window, cfg.SlackOutboundMaxPerWindow),
+		threadOwner:          owner,
+		generalAutoReplyLock: newGeneralAutoReplyLocker(strings.TrimSpace(cfg.RedisURL)),
 	}
 }
 
@@ -355,16 +358,25 @@ func (b *Bot) dispatchBroadcastMultiagent(ctx context.Context, channel, rawText 
 // by deterministically selecting one squad participant and posting a single reply.
 func (b *Bot) dispatchGeneralAutoReply(ctx context.Context, channel, rawText string, ev *slackevents.MessageEvent) bool {
 	if ev == nil || b.cfg == nil {
+		emp := ""
+		if b != nil && b.cfg != nil {
+			emp = strings.TrimSpace(b.cfg.EmployeeID)
+		}
+		log.Printf("general_auto_reply: skip reason=missing_event_or_config employee=%s", emp)
 		return false
 	}
-	if !generalAutoReplyNoSquadMentions(rawText, b.cfg) {
+	mentions := mentionedSquadKeys(rawText, b.cfg)
+	if len(mentions) > 0 {
+		log.Printf("general_auto_reply: skip reason=explicit_squad_mention employee=%s mentions=%s", strings.TrimSpace(b.cfg.EmployeeID), strings.Join(mentions, ","))
 		return false
 	}
 	if !generalAutoReplyEligible(b.cfg, channel, ev.User) {
+		log.Printf("general_auto_reply: skip reason=ineligible employee=%s channel=%s user=%s", strings.TrimSpace(b.cfg.EmployeeID), strings.TrimSpace(channel), strings.TrimSpace(ev.User))
 		return false
 	}
 	anchorTS := strings.TrimSpace(ev.TimeStamp)
 	if anchorTS == "" {
+		log.Printf("general_auto_reply: skip reason=empty_anchor employee=%s", strings.TrimSpace(b.cfg.EmployeeID))
 		return false
 	}
 	if !shouldTriggerGeneralAutoReply(
@@ -373,17 +385,38 @@ func (b *Bot) dispatchGeneralAutoReply(ctx context.Context, channel, rawText str
 		b.cfg.MultiagentShuffleSecret,
 		b.cfg.MultiagentGeneralAutoReplyProbability,
 	) {
+		log.Printf("general_auto_reply: skip reason=deterministic_probability employee=%s anchor=%s", strings.TrimSpace(b.cfg.EmployeeID), anchorTS)
 		return false
 	}
 	winner := selectSingleGeneralParticipant(anchorTS, b.cfg.MultiagentOrder, b.cfg.MultiagentShuffleSecret)
 	if winner == "" {
+		log.Printf("general_auto_reply: skip reason=empty_winner employee=%s anchor=%s", strings.TrimSpace(b.cfg.EmployeeID), anchorTS)
 		return false
 	}
-	if strings.ToLower(strings.TrimSpace(b.cfg.EmployeeID)) != winner {
+	selfKey := strings.ToLower(strings.TrimSpace(b.cfg.EmployeeID))
+	log.Printf("general_auto_reply: candidate employee=%s winner=%s anchor=%s", selfKey, winner, anchorTS)
+	if selfKey == winner {
+		claimant := "winner:" + selfKey
+		if !b.tryGeneralAutoReplyClaim(ctx, channel, anchorTS, claimant) {
+			log.Printf("general_auto_reply: winner_claim_missed employee=%s anchor=%s", selfKey, anchorTS)
+			return false
+		}
+		if b.postLLMReplyWithResult(ctx, channel, rawText, anchorTS) {
+			log.Printf("general_auto_reply: posted employee=%s path=winner anchor=%s", selfKey, anchorTS)
+			return true
+		}
+		log.Printf("general_auto_reply: post_failed employee=%s path=winner anchor=%s", selfKey, anchorTS)
+		b.releaseGeneralAutoReplyClaim(ctx, channel, anchorTS, claimant)
 		return false
 	}
-	b.postLLMReply(ctx, channel, rawText, anchorTS)
-	return true
+	if b.generalAutoReplyLock == nil {
+		log.Printf("general_auto_reply: skip reason=no_lock_for_failover employee=%s winner=%s anchor=%s", selfKey, winner, anchorTS)
+		return false
+	}
+	delay := generalAutoReplyFailoverDelay(selfKey, b.cfg.MultiagentOrder)
+	go b.tryGeneralAutoReplyFailover(ctx, channel, rawText, anchorTS, selfKey, winner, delay)
+	log.Printf("general_auto_reply: failover_scheduled employee=%s winner=%s delay=%s anchor=%s", selfKey, winner, delay, anchorTS)
+	return false
 }
 
 func generalAutoReplyEligible(cfg *config.Config, channel, userID string) bool {
@@ -402,7 +435,63 @@ func generalAutoReplyNoSquadMentions(rawText string, cfg *config.Config) bool {
 	return len(mentionedSquadKeys(rawText, cfg)) == 0
 }
 
+func generalAutoReplyFailoverDelay(selfKey string, order []string) time.Duration {
+	base := 4 * time.Second
+	for i, key := range order {
+		if strings.EqualFold(strings.TrimSpace(key), strings.TrimSpace(selfKey)) {
+			return base + time.Duration(i+1)*time.Second
+		}
+	}
+	return base + 5*time.Second
+}
+
+func (b *Bot) tryGeneralAutoReplyFailover(ctx context.Context, channel, rawText, anchorTS, selfKey, winner string, delay time.Duration) {
+	if delay > 0 {
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(delay):
+		}
+	}
+	claimant := "failover:" + selfKey
+	if !b.tryGeneralAutoReplyClaim(ctx, channel, anchorTS, claimant) {
+		log.Printf("general_auto_reply: failover_not_selected employee=%s winner=%s anchor=%s", selfKey, winner, anchorTS)
+		return
+	}
+	if b.postLLMReplyWithResult(ctx, channel, rawText, anchorTS) {
+		log.Printf("general_auto_reply: posted employee=%s path=failover winner=%s anchor=%s", selfKey, winner, anchorTS)
+		return
+	}
+	log.Printf("general_auto_reply: post_failed employee=%s path=failover winner=%s anchor=%s", selfKey, winner, anchorTS)
+	b.releaseGeneralAutoReplyClaim(ctx, channel, anchorTS, claimant)
+}
+
+func (b *Bot) tryGeneralAutoReplyClaim(ctx context.Context, channel, anchorTS, claimant string) bool {
+	if b.generalAutoReplyLock == nil {
+		return strings.HasPrefix(claimant, "winner:")
+	}
+	ok, err := b.generalAutoReplyLock.TryClaim(ctx, channel, anchorTS, claimant, 90*time.Second)
+	if err != nil {
+		log.Printf("general_auto_reply: claim_error claimant=%s channel=%s anchor=%s err=%v", claimant, channel, anchorTS, err)
+		return false
+	}
+	return ok
+}
+
+func (b *Bot) releaseGeneralAutoReplyClaim(ctx context.Context, channel, anchorTS, claimant string) {
+	if b.generalAutoReplyLock == nil {
+		return
+	}
+	if err := b.generalAutoReplyLock.ReleaseIfOwned(ctx, channel, anchorTS, claimant); err != nil {
+		log.Printf("general_auto_reply: release_error claimant=%s channel=%s anchor=%s err=%v", claimant, channel, anchorTS, err)
+	}
+}
+
 func (b *Bot) postLLMReply(ctx context.Context, channel, userText, messageTS string) {
+	_ = b.postLLMReplyWithResult(ctx, channel, userText, messageTS)
+}
+
+func (b *Bot) postLLMReplyWithResult(ctx context.Context, channel, userText, messageTS string) bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
@@ -413,7 +502,7 @@ func (b *Bot) postLLMReply(ctx context.Context, channel, userText, messageTS str
 			emp = "default"
 		}
 		log.Printf("slack outbound rate limit: skipping reply (employee=%s channel=%s)", emp, channel)
-		return
+		return false
 	}
 
 	persona := b.persona.String()
@@ -436,12 +525,12 @@ func (b *Bot) postLLMReply(ctx context.Context, channel, userText, messageTS str
 		_, _, err = b.api.PostMessageContext(ctx, channel, opts...)
 		if err != nil {
 			log.Printf("slack post message: %v", err)
-			return
+			return false
 		}
 		if b.outbound != nil {
 			b.outbound.record(time.Now())
 		}
-		return
+		return true
 	}
 	if reply == "" {
 		reply = "…"
@@ -461,11 +550,12 @@ func (b *Bot) postLLMReply(ctx context.Context, channel, userText, messageTS str
 	_, _, err = b.api.PostMessageContext(ctx, channel, opts...)
 	if err != nil {
 		log.Printf("slack post message: %v", err)
-		return
+		return false
 	}
 	if b.outbound != nil {
 		b.outbound.record(time.Now())
 	}
+	return true
 }
 
 func (b *Bot) useAlexHints() bool {
