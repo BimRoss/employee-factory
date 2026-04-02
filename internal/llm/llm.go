@@ -11,7 +11,7 @@ import (
 	"github.com/sashabaranov/go-openai"
 )
 
-// EmployeeLLM wraps Cogito OpenAI-compatible client (Chutes, OpenRouter, etc.).
+// EmployeeLLM wraps a Cogito OpenAI-compatible client (OpenRouter, Chutes, etc.).
 type EmployeeLLM struct {
 	primary        cogito.LLM
 	fallback       cogito.LLM

@@ -7,8 +7,8 @@ import (
 	"strings"
 )
 
-// DefaultChutesModel is used when LLM_MODEL is unset and matches the default Chutes base URL.
-const DefaultChutesModel = "deepseek-ai/DeepSeek-V3.1-TEE"
+// DefaultOpenRouterModel is used when LLM_MODEL is unset with the default OpenRouter base URL.
+const DefaultOpenRouterModel = "google/gemini-2.0-flash-001"
 
 // Config holds runtime settings for one employee instance.
 type Config struct {
@@ -27,7 +27,7 @@ type Config struct {
 	LLMTemperature float32
 	// LLMTopP is optional nucleus sampling; nil means omit (provider default).
 	LLMTopP *float32
-	// LLMMaxRetries is extra completion attempts on the primary model after transient errors (429/502/503, Chutes "no instances").
+	// LLMMaxRetries is extra completion attempts on the primary model after transient errors (429/502/503, temporary capacity).
 	LLMMaxRetries int
 	// LLMRetryBackoffMS is the base delay before the first retry; later retries double it (capped in the LLM package).
 	LLMRetryBackoffMS int
@@ -98,8 +98,8 @@ type Config struct {
 }
 
 // Load reads environment variables. Canonical keys (LLM_*, SLACK_*) take precedence;
-// if unset and EMPLOYEE_ID is set, falls back to {EMPLOYEE_ID}_CHUTES_KEY / _MODEL style keys.
-// LLM model: LLM_MODEL, then {EMPLOYEE}_MODEL (e.g. ALEX_MODEL when id is alex), else ALEX_MODEL only if EMPLOYEE_ID is unset, else default Chutes model.
+// if unset and EMPLOYEE_ID is set, falls back to {EMPLOYEE_ID}_OPENROUTER_API_KEY / _CHUTES_KEY / _MODEL style keys.
+// LLM model: LLM_MODEL, then {EMPLOYEE}_MODEL (e.g. ALEX_MODEL when id is alex), else ALEX_MODEL only if EMPLOYEE_ID is unset, else default OpenRouter model.
 func Load() (*Config, error) {
 	_ = os.Getenv("SKIP_DOTENV") // documented no-op if caller loads dotenv first
 
@@ -114,15 +114,23 @@ func Load() (*Config, error) {
 		llmModel = strings.TrimSpace(os.Getenv("ALEX_MODEL"))
 	}
 	if llmModel == "" {
-		llmModel = DefaultChutesModel
+		llmModel = DefaultOpenRouterModel
 	}
 
 	cfg := &Config{
 		EmployeeID:        empID,
 		HTTPAddr:          getEnv("HTTP_ADDR", ":8080"),
-		LLMBaseURL:        getEnv("LLM_BASE_URL", "https://llm.chutes.ai/v1"),
+		LLMBaseURL:        getEnv("LLM_BASE_URL", "https://openrouter.ai/api/v1"),
 		LLMModel:          llmModel,
-		LLMAPIKey:         strings.TrimSpace(firstNonEmpty(os.Getenv("LLM_API_KEY"), employeePrefixed(empID, "CHUTES_KEY"), os.Getenv("ALEX_CHUTES_KEY"))),
+		LLMAPIKey: strings.TrimSpace(firstNonEmpty(
+			os.Getenv("LLM_API_KEY"),
+			os.Getenv("OPENROUTER_API_KEY"),
+			employeePrefixed(empID, "OPENROUTER_API_KEY"),
+			employeePrefixed(empID, "OPENROUTER_KEY"),
+			employeePrefixed(empID, "CHUTES_KEY"),
+			os.Getenv("ALEX_OPENROUTER_API_KEY"),
+			os.Getenv("ALEX_CHUTES_KEY"),
+		)),
 		LLMSystemMaxRunes: parseIntEnvSigned("LLM_SYSTEM_MAX_RUNES", 48000),
 		// Higher default budget reduces model-side truncation; brevity is still governed by Slack response policy.
 		LLMMaxTokens:              parseIntEnvMin("LLM_MAX_TOKENS", 900, 1),
@@ -167,7 +175,7 @@ func Load() (*Config, error) {
 	}
 
 	if cfg.LLMAPIKey == "" {
-		return nil, fmt.Errorf("set LLM_API_KEY, or %s_CHUTES_KEY, or ALEX_CHUTES_KEY for local Alex", strings.ToUpper(empID))
+		return nil, fmt.Errorf("set LLM_API_KEY/OPENROUTER_API_KEY, or %s_OPENROUTER_API_KEY/%s_CHUTES_KEY, or ALEX_OPENROUTER_API_KEY/ALEX_CHUTES_KEY for local Alex", strings.ToUpper(empID), strings.ToUpper(empID))
 	}
 	if cfg.SlackBotToken == "" {
 		return nil, fmt.Errorf("set SLACK_BOT_TOKEN or employee-prefixed _SLACK_BOT_TOKEN")

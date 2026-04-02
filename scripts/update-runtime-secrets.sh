@@ -6,7 +6,7 @@ set -euo pipefail
 #
 # Secret SECRET_NAME (default employee-factory-<EMPLOYEE_ID>-runtime)
 # Keys: LLM_API_KEY, SLACK_BOT_TOKEN, SLACK_APP_TOKEN; optional SLACK_USER_TOKEN, MULTIAGENT_BOT_USER_IDS, and LLM_MODEL
-# With EMPLOYEE_ID set, also reads {ID}_CHUTES_KEY, {ID}_MODEL, and {ID}_SLACK_* (e.g. GARTH_CHUTES_KEY).
+# With EMPLOYEE_ID set, also reads {ID}_OPENROUTER_API_KEY / {ID}_OPENROUTER_KEY / {ID}_CHUTES_KEY, {ID}_MODEL, and {ID}_SLACK_*.
 #
 # Usage:
 #   ./scripts/update-runtime-secrets.sh
@@ -128,6 +128,8 @@ fi
 kubectl create namespace "${NAMESPACE}" --dry-run=client -o yaml | kubectl apply -f -
 
 EMP_PREFIX="$(echo "${EMPLOYEE_ID}" | tr '[:lower:]-' '[:upper:]_')"
+OPENROUTER_API_VAR="${EMP_PREFIX}_OPENROUTER_API_KEY"
+OPENROUTER_KEY_VAR="${EMP_PREFIX}_OPENROUTER_KEY"
 CHUTES_VAR="${EMP_PREFIX}_CHUTES_KEY"
 BOT_VAR="${EMP_PREFIX}_SLACK_BOT_TOKEN"
 APP_VAR="${EMP_PREFIX}_SLACK_APP_TOKEN"
@@ -135,7 +137,19 @@ USER_VAR="${EMP_PREFIX}_SLACK_USER_TOKEN"
 
 LLM_KEY="${LLM_API_KEY:-}"
 if [[ -z "${LLM_KEY}" ]]; then
+  LLM_KEY="${OPENROUTER_API_KEY:-}"
+fi
+if [[ -z "${LLM_KEY}" ]]; then
+  LLM_KEY="${!OPENROUTER_API_VAR:-}"
+fi
+if [[ -z "${LLM_KEY}" ]]; then
+  LLM_KEY="${!OPENROUTER_KEY_VAR:-}"
+fi
+if [[ -z "${LLM_KEY}" ]]; then
   LLM_KEY="${!CHUTES_VAR:-}"
+fi
+if [[ -z "${LLM_KEY}" && "${EMPLOYEE_ID}" == "alex" ]]; then
+  LLM_KEY="${ALEX_OPENROUTER_API_KEY:-}"
 fi
 if [[ -z "${LLM_KEY}" && "${EMPLOYEE_ID}" == "alex" ]]; then
   LLM_KEY="${ALEX_CHUTES_KEY:-}"
@@ -166,7 +180,7 @@ if [[ -z "${USER}" && "${EMPLOYEE_ID}" == "alex" ]]; then
 fi
 
 if [[ -z "${LLM_KEY}" || -z "${BOT}" || -z "${APP}" ]]; then
-  echo "need LLM_API_KEY or ${EMP_PREFIX}_CHUTES_KEY, and Slack tokens (${EMP_PREFIX}_SLACK_* or SLACK_*)" >&2
+  echo "need LLM_API_KEY/OPENROUTER_API_KEY or ${EMP_PREFIX}_OPENROUTER_API_KEY/${EMP_PREFIX}_OPENROUTER_KEY/${EMP_PREFIX}_CHUTES_KEY, and Slack tokens (${EMP_PREFIX}_SLACK_* or SLACK_*)" >&2
   exit 1
 fi
 

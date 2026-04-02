@@ -4,9 +4,9 @@
 
 The repo is the source of truth for behavior—read the code and `.env.example` if you are running or extending it.
 
-## LLM model and resilience (Chutes)
+## LLM model and resilience (OpenRouter)
 
-Default model is `deepseek-ai/DeepSeek-V3.1-TEE` (override via `LLM_MODEL`). Chat completions retry on transient provider errors (`429`, `502`, `503`, and Chutes “no instances available”) with exponential backoff. `LLM_FALLBACK_MODEL` is optional and can be left empty for single-model behavior (recommended for this Slack flow). Configure via `LLM_MAX_RETRIES`, `LLM_RETRY_BACKOFF_MS`, and `LLM_FALLBACK_MODEL` (see `.env.example`). No extra secrets.
+Default model is `google/gemini-2.0-flash-001` via OpenRouter (`LLM_BASE_URL` defaults to `https://openrouter.ai/api/v1`; override via `LLM_MODEL` when needed). Chat completions retry on transient provider errors (`429`, `502`, `503`, plus temporary-capacity responses) with exponential backoff. `LLM_FALLBACK_MODEL` is optional and can be left empty for single-model behavior (recommended for this Slack flow). Configure via `LLM_MAX_RETRIES`, `LLM_RETRY_BACKOFF_MS`, and `LLM_FALLBACK_MODEL` (see `.env.example`).
 
 ## Multi-agent Slack (`<!everyone>`)
 
@@ -58,5 +58,5 @@ Phase 1 adds only ConfigMap keys; runtime Secrets stay the same.
 
 - `scripts/update-runtime-secrets.sh` syncs one employee runtime Secret from local `.env` (`EMPLOYEE_ID=alex|tim|ross|garth`).
 - `scripts/update-all-runtime-secrets.sh` syncs all four runtime Secrets in one pass.
-- Synced keys include `LLM_API_KEY`, `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`, optional `SLACK_USER_TOKEN`, optional `LLM_MODEL`, and `MULTIAGENT_BOT_USER_IDS`.
+- Synced keys include `LLM_API_KEY` (or `OPENROUTER_API_KEY` alias), `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`, optional `SLACK_USER_TOKEN`, optional `LLM_MODEL`, and `MULTIAGENT_BOT_USER_IDS`.
 - `MULTIAGENT_BOT_USER_IDS` auto-resolves from each bot token via Slack `auth.test` (order from `MULTIAGENT_ORDER`, default `ross,tim,alex,garth`) unless explicitly provided.

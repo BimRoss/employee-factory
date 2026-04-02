@@ -11,7 +11,7 @@ import (
 const maxRetryBackoffMS = 8000
 
 // IsTransientLLMError reports whether err is worth retrying or routing to a fallback model
-// (rate limits, gateway errors, Chutes cold capacity).
+// (rate limits, gateway errors, and temporary provider capacity).
 func IsTransientLLMError(err error) bool {
 	if err == nil {
 		return false
