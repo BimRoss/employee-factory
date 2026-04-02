@@ -11,6 +11,7 @@ var (
 	reInternalArtifactToken = regexp.MustCompile(`(?i)\b(?:alex|tim|ross|garth)-[a-z0-9-]{3,}\b`)
 	reInternalArtifactLine  = regexp.MustCompile(`(?i)^\s*(?:\*{1,2}\s*)?(?:current state:|closer\b|the rule\b|tim-systems-delegation\b|here is the rewritten slack reply:|conversation summary\b|step\s+\d+\s*:|ross\s*:|alex\s*:|garth\s*:|tim\s*:|assistant\s*:)\s*`)
 	reLikelyCutoffTail      = regexp.MustCompile(`(?i)\b(?:and|or|but|so|because|with|without|to|for|of|in|on|at|from|by|about|into|onto|whats|what's)\s*$`)
+	reAwkwardFirstPerson    = regexp.MustCompile(`(?i)(^|[.!?\n]\s*)me\s+(?:is|am|are|was|were|have|had|will|can|could|should|would|do|did|need|want|think|know|feel|recommend|prefer|agree|disagree|support|understand|write|wrote|plan|guess|see|saw|hear|heard|believe)\b`)
 )
 
 const outboundRepairSuffix = `
@@ -38,6 +39,9 @@ func outboundNeedsRepair(reply string) (bool, string) {
 	}
 	if reLikelyCutoffTail.MatchString(s) {
 		return true, "dangling_tail_word"
+	}
+	if reAwkwardFirstPerson.MatchString(s) {
+		return true, "awkward_first_person_grammar"
 	}
 	last := s[len(s)-1]
 	if (last >= 'a' && last <= 'z') || (last >= 'A' && last <= 'Z') || (last >= '0' && last <= '9') {

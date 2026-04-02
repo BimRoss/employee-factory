@@ -19,6 +19,7 @@ var (
 	reBracketLinkMD = regexp.MustCompile(`\[([^\]]+)\]\([^)]+\)`)
 	reSlackMention  = regexp.MustCompile(`<@(U[A-Za-z0-9]+)(?:\|[^>]+)?>`)
 	reSpeakerPrefix = regexp.MustCompile(`(?i)^\s*(?:\*{1,2}\s*)?(?:alex|tim|ross|garth|assistant)\s*:\s*`)
+	reWordToken     = regexp.MustCompile(`(?i)[a-z][a-z'_-]*`)
 )
 
 const (
@@ -90,7 +91,8 @@ func normalizeSelfReferencePlainText(s string, cfg *config.Config) string {
 	}
 	mentions := reSlackMention.FindAllString(s, -1)
 	for i := range parts {
-		parts[i] = reSelf.ReplaceAllString(parts[i], "me")
+		parts[i] = rewriteSelfNameToPronoun(parts[i], reSelf)
+		parts[i] = normalizeAwkwardFirstPersonGrammar(parts[i])
 	}
 
 	var b strings.Builder
@@ -107,6 +109,84 @@ func normalizeSelfReferencePlainText(s string, cfg *config.Config) string {
 	out = strings.ReplaceAll(out, " ?", "?")
 	out = strings.ReplaceAll(out, " !", "!")
 	return strings.TrimSpace(out)
+}
+
+func rewriteSelfNameToPronoun(s string, reSelf *regexp.Regexp) string {
+	if s == "" || reSelf == nil {
+		return s
+	}
+	matches := reSelf.FindAllStringIndex(s, -1)
+	if len(matches) == 0 {
+		return s
+	}
+	var b strings.Builder
+	last := 0
+	for _, m := range matches {
+		if len(m) != 2 || m[0] < last {
+			continue
+		}
+		start, end := m[0], m[1]
+		b.WriteString(s[last:start])
+		if isSentenceStartPosition(s, start) {
+			b.WriteString("I")
+		} else {
+			b.WriteString("me")
+		}
+		last = end
+	}
+	b.WriteString(s[last:])
+	return b.String()
+}
+
+func isSentenceStartPosition(s string, idx int) bool {
+	if idx <= 0 {
+		return true
+	}
+	for i := idx - 1; i >= 0; i-- {
+		switch s[i] {
+		case ' ', '\t':
+			continue
+		case '\n', '.', '!', '?':
+			return true
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+func normalizeAwkwardFirstPersonGrammar(s string) string {
+	if s == "" {
+		return s
+	}
+	matches := reWordToken.FindAllStringIndex(s, -1)
+	if len(matches) < 2 {
+		return s
+	}
+	buf := []byte(s)
+	for i := 0; i < len(matches)-1; i++ {
+		aStart, aEnd := matches[i][0], matches[i][1]
+		bStart, bEnd := matches[i+1][0], matches[i+1][1]
+		first := strings.ToLower(string(buf[aStart:aEnd]))
+		second := strings.ToLower(string(buf[bStart:bEnd]))
+		if first != "me" {
+			continue
+		}
+		replacement := ""
+		switch second {
+		case "is", "am", "are":
+			replacement = "I am"
+		case "was", "were":
+			replacement = "I was"
+		case "have", "had", "will", "can", "could", "should", "would", "do", "did", "need", "want", "think", "know", "feel", "recommend", "prefer", "agree", "disagree", "support", "understand", "write", "wrote", "plan", "guess", "see", "saw", "hear", "heard", "believe":
+			replacement = "I " + second
+		default:
+			continue
+		}
+		buf = append(buf[:aStart], append([]byte(replacement), buf[bEnd:]...)...)
+		return normalizeAwkwardFirstPersonGrammar(string(buf))
+	}
+	return string(buf)
 }
 
 func capSlackReplyLength(s string, maxLines int, maxRunes int) string {

@@ -35,3 +35,13 @@ func TestOutboundNeedsRepair_detectsSpeakerPrefixLeak(t *testing.T) {
 		t.Fatal("expected reason for speaker prefix leak")
 	}
 }
+
+func TestOutboundNeedsRepair_detectsAwkwardFirstPersonGrammar(t *testing.T) {
+	flagged, reason := outboundNeedsRepair("me is ready to work.")
+	if !flagged {
+		t.Fatal("expected awkward first-person grammar to be flagged")
+	}
+	if reason != "awkward_first_person_grammar" {
+		t.Fatalf("expected awkward grammar reason, got %q", reason)
+	}
+}

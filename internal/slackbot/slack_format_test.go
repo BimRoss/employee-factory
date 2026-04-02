@@ -111,7 +111,7 @@ func TestNormalizeSlackReply_truncationEndsAsCompleteSentence(t *testing.T) {
 	}
 }
 
-func TestNormalizeSlackReply_rewritesSelfNameToMe(t *testing.T) {
+func TestNormalizeSlackReply_rewritesSelfNameToFirstPersonGrammar(t *testing.T) {
 	cfg := &config.Config{
 		EmployeeID: "ross",
 	}
@@ -120,8 +120,11 @@ func TestNormalizeSlackReply_rewritesSelfNameToMe(t *testing.T) {
 	if strings.Contains(strings.ToLower(out), "ross") {
 		t.Fatalf("expected self-name rewritten, got %q", out)
 	}
-	if !strings.Contains(out, "me") {
-		t.Fatalf("expected first-person self-reference, got %q", out)
+	if !strings.Contains(out, "I can take this one.") {
+		t.Fatalf("expected subject self-reference to use I, got %q", out)
+	}
+	if !strings.Contains(out, "ask me.") {
+		t.Fatalf("expected object self-reference to use me, got %q", out)
 	}
 }
 
@@ -145,6 +148,18 @@ func TestNormalizeSlackReply_preservesOtherAgentNamesAndMentions(t *testing.T) {
 	}
 	if !strings.Contains(out, "<@U0AQ10R2H8E") {
 		t.Fatalf("expected mention token preserved, got %q", out)
+	}
+}
+
+func TestNormalizeSlackReply_repairsAwkwardMeIsPattern(t *testing.T) {
+	cfg := &config.Config{EmployeeID: "ross"}
+	in := "me is ready to work."
+	out := normalizeSlackReply(in, cfg, "")
+	if strings.Contains(strings.ToLower(out), "me is") {
+		t.Fatalf("expected awkward first-person grammar repaired, got %q", out)
+	}
+	if !strings.Contains(out, "I am ready to work.") {
+		t.Fatalf("expected repaired grammar, got %q", out)
 	}
 }
 
