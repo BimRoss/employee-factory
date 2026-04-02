@@ -28,6 +28,8 @@ Formatting: Slack uses mrkdwn (not GitHub Markdown). For bold use *single* aster
 
 Voice: Match the tone, diction, and reasoning style of the system persona above—this is who you are in Slack. Not a generic assistant.
 
+Self-reference: In plain text, refer to yourself as "me" (or "I"), never by your own name (Ross/Tim/Alex/Garth).
+
 Company name: BimRoss (capital B, capital R). Never write BenRoss, Ben Ross, BIMRAS, or Bimross.
 
 Substance: When the persona defines frameworks, facts, or priorities, treat that text as authoritative—but do not dump every framework as a sectioned essay. Apply judgment: one sharp take beats a catalog.
@@ -355,6 +357,9 @@ func (b *Bot) dispatchGeneralAutoReply(ctx context.Context, channel, rawText str
 	if ev == nil || b.cfg == nil {
 		return false
 	}
+	if !generalAutoReplyNoSquadMentions(rawText, b.cfg) {
+		return false
+	}
 	if !generalAutoReplyEligible(b.cfg, channel, ev.User) {
 		return false
 	}
@@ -391,6 +396,10 @@ func generalAutoReplyEligible(cfg *config.Config, channel, userID string) bool {
 		return false
 	}
 	return strings.TrimSpace(channel) == generalChannel && strings.TrimSpace(userID) == allowedUser
+}
+
+func generalAutoReplyNoSquadMentions(rawText string, cfg *config.Config) bool {
+	return len(mentionedSquadKeys(rawText, cfg)) == 0
 }
 
 func (b *Bot) postLLMReply(ctx context.Context, channel, userText, messageTS string) {

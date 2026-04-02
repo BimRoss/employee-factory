@@ -62,3 +62,21 @@ func TestGeneralAutoReplyProbabilityAndWinner_uniqueness(t *testing.T) {
 		t.Fatalf("winner should appear exactly once in order: winner=%q count=%d", winner, n)
 	}
 }
+
+func TestGeneralAutoReplyNoSquadMentions(t *testing.T) {
+	cfg := &config.Config{
+		MultiagentBotUserIDs: map[string]string{
+			"ross": "UROSS",
+			"tim":  "UTIM",
+		},
+		MultiagentOrder: []string{"ross", "tim"},
+	}
+
+	if !generalAutoReplyNoSquadMentions("who is ready to work", cfg) {
+		t.Fatal("expected plain message with no mentions to be eligible for random auto-reply path")
+	}
+
+	if generalAutoReplyNoSquadMentions("what do you think <@UROSS>?", cfg) {
+		t.Fatal("expected explicit squad mention to disable random auto-reply path")
+	}
+}

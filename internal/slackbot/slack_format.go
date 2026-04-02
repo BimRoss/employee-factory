@@ -67,8 +67,46 @@ func stripSpeakerPrefixes(s string) string {
 // normalizeSlackReply applies Slack formatting fixes plus a strict short-form cap.
 func normalizeSlackReply(s string, cfg *config.Config, selfSlackUserID string) string {
 	s = formatOutgoingSlackMessage(s, cfg, selfSlackUserID)
+	s = normalizeSelfReferencePlainText(s, cfg)
 	s = capSlackReplyLength(s, slackReplyMaxLines, slackReplyMaxRunes)
 	return strings.TrimSpace(s)
+}
+
+// normalizeSelfReferencePlainText rewrites plain self-name references to "me"
+// so agent replies use first-person voice ("me"/"I") instead of persona names.
+// It deliberately skips Slack mention tokens (<@U...>) to avoid breaking pings.
+func normalizeSelfReferencePlainText(s string, cfg *config.Config) string {
+	if cfg == nil {
+		return s
+	}
+	selfKey := strings.TrimSpace(cfg.EmployeeID)
+	if selfKey == "" {
+		return s
+	}
+	reSelf := regexp.MustCompile(`(?i)\b` + regexp.QuoteMeta(selfKey) + `\b`)
+	parts := reSlackMention.Split(s, -1)
+	if len(parts) == 0 {
+		return s
+	}
+	mentions := reSlackMention.FindAllString(s, -1)
+	for i := range parts {
+		parts[i] = reSelf.ReplaceAllString(parts[i], "me")
+	}
+
+	var b strings.Builder
+	for i := 0; i < len(parts); i++ {
+		b.WriteString(parts[i])
+		if i < len(mentions) {
+			b.WriteString(mentions[i])
+		}
+	}
+
+	out := reCollapseSpaces.ReplaceAllString(b.String(), " ")
+	out = strings.ReplaceAll(out, " ,", ",")
+	out = strings.ReplaceAll(out, " .", ".")
+	out = strings.ReplaceAll(out, " ?", "?")
+	out = strings.ReplaceAll(out, " !", "!")
+	return strings.TrimSpace(out)
 }
 
 func capSlackReplyLength(s string, maxLines int, maxRunes int) string {

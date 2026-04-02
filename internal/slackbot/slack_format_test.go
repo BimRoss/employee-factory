@@ -111,6 +111,43 @@ func TestNormalizeSlackReply_truncationEndsAsCompleteSentence(t *testing.T) {
 	}
 }
 
+func TestNormalizeSlackReply_rewritesSelfNameToMe(t *testing.T) {
+	cfg := &config.Config{
+		EmployeeID: "ross",
+	}
+	in := "Ross can take this one. If you need logs, ask Ross."
+	out := normalizeSlackReply(in, cfg, "")
+	if strings.Contains(strings.ToLower(out), "ross") {
+		t.Fatalf("expected self-name rewritten, got %q", out)
+	}
+	if !strings.Contains(out, "me") {
+		t.Fatalf("expected first-person self-reference, got %q", out)
+	}
+}
+
+func TestNormalizeSlackReply_preservesOtherAgentNamesAndMentions(t *testing.T) {
+	cfg := &config.Config{
+		EmployeeID: "ross",
+		MultiagentBotUserIDs: map[string]string{
+			"ross":  "U0APX108QE7",
+			"tim":   "U0AQ10R2H8E",
+			"alex":  "U0APSMH05B5",
+			"garth": "UGARTH0001",
+		},
+	}
+	in := "Tim asked Ross to handle this; ping <@U0AQ10R2H8E|Tim> if needed."
+	out := normalizeSlackReply(in, cfg, "U0APX108QE7")
+	if strings.Contains(strings.ToLower(out), "ross") {
+		t.Fatalf("expected self-name rewritten, got %q", out)
+	}
+	if !strings.Contains(out, "Tim asked me") {
+		t.Fatalf("expected self-name rewrite with other names preserved, got %q", out)
+	}
+	if !strings.Contains(out, "<@U0AQ10R2H8E") {
+		t.Fatalf("expected mention token preserved, got %q", out)
+	}
+}
+
 func TestFormatOutgoingSlackMessage_stripsSpeakerPrefixes(t *testing.T) {
 	in := "**Garth:** Keep this tight.\nRoss: Next move is ship."
 	out := formatOutgoingSlackMessage(in, nil, "")
