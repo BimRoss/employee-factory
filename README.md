@@ -4,9 +4,9 @@
 
 The repo is the source of truth for behavior—read the code and `.env.example` if you are running or extending it.
 
-## LLM resilience (Chutes)
+## LLM model and resilience (Chutes)
 
-Chat completions retry on transient provider errors (`429`, `502`, `503`, and Chutes “no instances available”) with exponential backoff, then optionally try `LLM_FALLBACK_MODEL` on the same `LLM_BASE_URL` and API key (typically a smaller model). Configure via `LLM_MAX_RETRIES`, `LLM_RETRY_BACKOFF_MS`, and `LLM_FALLBACK_MODEL` (see `.env.example`). No extra secrets.
+Default model is `kimi-k2.5-tee` (override via `LLM_MODEL`). Chat completions retry on transient provider errors (`429`, `502`, `503`, and Chutes “no instances available”) with exponential backoff. `LLM_FALLBACK_MODEL` is optional and can be left empty for single-model behavior (recommended for this Slack flow). Configure via `LLM_MAX_RETRIES`, `LLM_RETRY_BACKOFF_MS`, and `LLM_FALLBACK_MODEL` (see `.env.example`). No extra secrets.
 
 ## Multi-agent Slack (`<!everyone>`)
 
@@ -15,7 +15,8 @@ For `@everyone` triggers (no individual bot `@mention`), each squad pod receives
 - **Turn order** is a **pseudorandom permutation** of `MULTIAGENT_ORDER`, deterministic per trigger from `SHA-256(anchor message timestamp + NUL + comma-joined order + NUL + optional secret)`. Every pod must use the same `MULTIAGENT_ORDER` and the same optional `MULTIAGENT_SHUFFLE_SECRET` so they agree on who posts first, second, etc.
 - **Coordination** is **not** Redis: each bot polls `conversations.history` until prior squad messages match the expected slot prefix, then calls the LLM and posts (same as before).
 - **`MULTIAGENT_BROADCAST_ROUNDS`** (default `1`) is how many full passes over that shuffled order to run per trigger (`1` ⇒ each agent replies once).
-- **`MULTIAGENT_BROADCAST_HANDOFF_PROBABILITY`** (default `0.5`) controls per-reply chance to include exactly one other-agent `@mention`, which creates organic follow-on turns without hardcoding message counts.
+- Per-reply handoff chance is sampled inside `MULTIAGENT_HANDOFF_MIN_PROBABILITY..MULTIAGENT_HANDOFF_MAX_PROBABILITY` (defaults `0.25..0.75`) so cross-agent mentions feel organic.
+- **`MULTIAGENT_BROADCAST_HANDOFF_PROBABILITY`** (default `0.5`) still controls broadcast intensity, but each reply uses bounded randomness before deciding the final `@mention`.
 - **Deterministic branch mode**: with `MULTIAGENT_BROADCAST_BRANCHING_ENABLED=true`, each `<!everyone>` trigger deterministically flips into branch mode using `MULTIAGENT_BROADCAST_BRANCHING_PROBABILITY` (default `0.5`). Branch mode uses `MULTIAGENT_BROADCAST_BRANCHING_HANDOFF_PROBABILITY` (default `1.0`) to produce richer cross-agent follow-ons while keeping ordering stable across pods.
 
 ### Turn quality policy (runtime-enforced prompt block)
@@ -26,6 +27,15 @@ During multi-agent sessions, each slot now receives an explicit policy block bef
 - **Novelty guard**: each agent is instructed to add one *new* angle instead of repeating previous bot lines.
 - **Single closer pattern**: non-final slots are instructed not to provide the final merged answer; the final slot is instructed to provide the closing recommendation.
 - **Close without ping-pong**: final slot suppresses handoff mentions by forcing handoff probability to `0` for that slot only.
+
+### Recency-weighted context
+
+Context blocks now include explicit recency weights so the newest message dominates while still preserving short memory:
+
+- `LLM_CONTEXT_WEIGHT_DECAY` (default `0.5`)
+- `LLM_CONTEXT_WEIGHT_WINDOW` (default `3`)
+
+This keeps conversations evolving naturally without drifting too far off the latest user intent.
 
 ### Never-sliced outbound safety
 

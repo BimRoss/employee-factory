@@ -98,7 +98,11 @@ func isFirstReplyFromUser(msgs []slack.Message, threadTS, userID, msgTS string) 
 }
 
 func threadTranscriptBefore(cfg *config.Config, botUserID string, msgs []slack.Message, threadTS, currentMsgTS string, maxRunes int) string {
-	var lines []string
+	type threadLine struct {
+		role string
+		text string
+	}
+	var entries []threadLine
 	for _, m := range msgs {
 		if m.Timestamp == currentMsgTS {
 			continue
@@ -114,12 +118,23 @@ func threadTranscriptBefore(cfg *config.Config, botUserID string, msgs []slack.M
 		if m.BotID != "" || m.User == botUserID {
 			role = "assistant"
 		} else if sk, ok := squadKeyForSlackUser(cfg, m.User); ok {
-			role = "[" + sk + "]"
+			role = sk
 		}
-		lines = append(lines, fmt.Sprintf("[%s] %s", role, text))
+		entries = append(entries, threadLine{role: role, text: text})
 	}
-	if len(lines) == 0 {
+	if len(entries) == 0 {
 		return ""
+	}
+	decay := 0.5
+	window := 3
+	if cfg != nil {
+		decay = cfg.LLMContextWeightDecay
+		window = cfg.LLMContextWeightWindow
+	}
+	lines := make([]string, 0, len(entries))
+	for i, e := range entries {
+		indexFromLatest := len(entries) - 1 - i
+		lines = append(lines, formatWeightedContext(e.role, e.text, indexFromLatest, decay, window))
 	}
 	out := "Thread so far (oldest first):\n" + strings.Join(lines, "\n")
 	r := []rune(out)
@@ -280,7 +295,17 @@ func (b *Bot) postLLMReplyInThread(ctx context.Context, channel, userText, messa
 	if reply == "" {
 		reply = "…"
 	}
+	reply = b.repairOutboundReply(ctx, persona, userText, reply)
 	reply = normalizeSlackReply(reply, b.cfg, b.botUserID)
+	if b.cfg.MultiagentConfigured() {
+		handoff, _ := shouldHandoff(
+			b.cfg.MultiagentHandoffProbability,
+			b.cfg.MultiagentHandoffMinProbability,
+			b.cfg.MultiagentHandoffMaxProbability,
+		)
+		reply = enforceMultiagentMentionPolicy(reply, b.cfg, b.botUserID, handoff)
+		reply = normalizeSlackReply(reply, b.cfg, b.botUserID)
+	}
 	opts := []slack.MsgOption{
 		slack.MsgOptionText(reply, false),
 		slack.MsgOptionTS(threadTS),

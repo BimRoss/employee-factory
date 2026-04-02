@@ -224,7 +224,7 @@ func prefixMatchesSquadSlots(squadMsgs []slack.Message, slots []string, k int) b
 	return true
 }
 
-func formatPriorSquadTurns(slots []string, slotIndex int, squadMsgs []slack.Message, idToKey map[string]string, maxRunes int) string {
+func formatPriorSquadTurns(slots []string, slotIndex int, squadMsgs []slack.Message, idToKey map[string]string, maxRunes int, decay float64, window int) string {
 	if slotIndex <= 0 || len(squadMsgs) == 0 {
 		return ""
 	}
@@ -232,7 +232,11 @@ func formatPriorSquadTurns(slots []string, slotIndex int, squadMsgs []slack.Mess
 	if n > len(squadMsgs) {
 		n = len(squadMsgs)
 	}
-	var lines []string
+	type squadLine struct {
+		role string
+		text string
+	}
+	var entries []squadLine
 	for i := 0; i < n; i++ {
 		key := idToKey[squadMsgs[i].User]
 		if key == "" {
@@ -242,10 +246,15 @@ func formatPriorSquadTurns(slots []string, slotIndex int, squadMsgs []slack.Mess
 		if text == "" {
 			continue
 		}
-		lines = append(lines, fmt.Sprintf("[%s] %s", key, text))
+		entries = append(entries, squadLine{role: key, text: text})
 	}
-	if len(lines) == 0 {
+	if len(entries) == 0 {
 		return ""
+	}
+	lines := make([]string, 0, len(entries))
+	for i, e := range entries {
+		indexFromLatest := len(entries) - 1 - i
+		lines = append(lines, formatWeightedContext(e.role, e.text, indexFromLatest, decay, window))
 	}
 	out := "Earlier responses in this multi-agent turn (in order):\n" + strings.Join(lines, "\n")
 	r := []rune(out)
@@ -352,7 +361,15 @@ func (b *Bot) runMultiagentSession(ctx context.Context, channel, rawText string,
 			return
 		}
 
-		prior := formatPriorSquadTurns(slots, k, msgs, idToKey, b.cfg.LLMThreadMaxRunes)
+		prior := formatPriorSquadTurns(
+			slots,
+			k,
+			msgs,
+			idToKey,
+			b.cfg.LLMThreadMaxRunes,
+			b.cfg.LLMContextWeightDecay,
+			b.cfg.LLMContextWeightWindow,
+		)
 		userPayload := userQuestion
 		if prior != "" {
 			userPayload = prior + "\n\n" + userQuestion
@@ -456,7 +473,11 @@ func (b *Bot) postMultiagentReply(ctx context.Context, channel, userPayload stri
 	handoff := false
 	if b.cfg.MultiagentConfigured() {
 		p := handoffProbability
-		handoff = rand.Float64() < p
+		handoff, _ = shouldHandoff(
+			p,
+			b.cfg.MultiagentHandoffMinProbability,
+			b.cfg.MultiagentHandoffMaxProbability,
+		)
 		if handoff {
 			suffix += "\n\nHand-off cue for this turn: include one @mention of another squad member—not yourself (@ross/@tim/@alex/@garth) with a concrete question or next step."
 		} else {

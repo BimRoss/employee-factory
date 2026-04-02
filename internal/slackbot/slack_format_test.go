@@ -111,6 +111,17 @@ func TestNormalizeSlackReply_truncationEndsAsCompleteSentence(t *testing.T) {
 	}
 }
 
+func TestFormatOutgoingSlackMessage_stripsSpeakerPrefixes(t *testing.T) {
+	in := "**Garth:** Keep this tight.\nRoss: Next move is ship."
+	out := formatOutgoingSlackMessage(in, nil, "")
+	if strings.Contains(strings.ToLower(out), "garth:") || strings.Contains(strings.ToLower(out), "ross:") {
+		t.Fatalf("expected speaker prefixes removed, got %q", out)
+	}
+	if !strings.Contains(out, "Keep this tight.") || !strings.Contains(out, "Next move is ship.") {
+		t.Fatalf("unexpected sanitized output: %q", out)
+	}
+}
+
 func TestEnforceMultiagentMentionPolicy_requireHandoff(t *testing.T) {
 	cfg := &config.Config{
 		EmployeeID: "ross",

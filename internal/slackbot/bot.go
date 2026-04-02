@@ -392,6 +392,15 @@ func (b *Bot) postLLMReply(ctx context.Context, channel, userText, messageTS str
 	}
 	reply = b.repairOutboundReply(ctx, persona, userPayload, reply)
 	reply = normalizeSlackReply(reply, b.cfg, b.botUserID)
+	if b.cfg.MultiagentConfigured() {
+		handoff, _ := shouldHandoff(
+			b.cfg.MultiagentHandoffProbability,
+			b.cfg.MultiagentHandoffMinProbability,
+			b.cfg.MultiagentHandoffMaxProbability,
+		)
+		reply = enforceMultiagentMentionPolicy(reply, b.cfg, b.botUserID, handoff)
+		reply = normalizeSlackReply(reply, b.cfg, b.botUserID)
+	}
 	opts := []slack.MsgOption{slack.MsgOptionText(reply, false)}
 	_, _, err = b.api.PostMessageContext(ctx, channel, opts...)
 	if err != nil {
@@ -432,7 +441,11 @@ func (b *Bot) channelHistoryContextBlock(ctx context.Context, channelID, current
 	for i, j := 0, len(msgs)-1; i < j; i, j = i+1, j-1 {
 		msgs[i], msgs[j] = msgs[j], msgs[i]
 	}
-	var lines []string
+	type historyLine struct {
+		role string
+		text string
+	}
+	var entries []historyLine
 	for _, m := range msgs {
 		if m.Timestamp == currentMsgTS {
 			continue
@@ -448,10 +461,15 @@ func (b *Bot) channelHistoryContextBlock(ctx context.Context, channelID, current
 		if m.BotID != "" || m.User == b.botUserID {
 			role = "assistant"
 		}
-		lines = append(lines, "["+role+"] "+text)
+		entries = append(entries, historyLine{role: role, text: text})
 	}
-	if len(lines) == 0 {
+	if len(entries) == 0 {
 		return ""
+	}
+	lines := make([]string, 0, len(entries))
+	for i, e := range entries {
+		indexFromLatest := len(entries) - 1 - i
+		lines = append(lines, formatWeightedContext(e.role, e.text, indexFromLatest, b.cfg.LLMContextWeightDecay, b.cfg.LLMContextWeightWindow))
 	}
 	out := "Earlier in this channel (oldest first):\n" + strings.Join(lines, "\n")
 	if b.cfg.LLMChannelIncludeThreads {

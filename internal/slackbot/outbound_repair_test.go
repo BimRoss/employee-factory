@@ -25,3 +25,13 @@ func TestFallbackCompleteReply_stripsArtifactsAndCompletesSentence(t *testing.T)
 		t.Fatalf("unexpected fallback output: %q", out)
 	}
 }
+
+func TestOutboundNeedsRepair_detectsSpeakerPrefixLeak(t *testing.T) {
+	flagged, reason := outboundNeedsRepair("**Garth:** Here is the rewritten Slack reply:")
+	if !flagged {
+		t.Fatal("expected speaker prefix leak to be flagged")
+	}
+	if reason == "" {
+		t.Fatal("expected reason for speaker prefix leak")
+	}
+}

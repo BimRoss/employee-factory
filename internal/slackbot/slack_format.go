@@ -18,6 +18,7 @@ var (
 	reMDHeading     = regexp.MustCompile(`(?m)^#{1,6}\s+`)
 	reBracketLinkMD = regexp.MustCompile(`\[([^\]]+)\]\([^)]+\)`)
 	reSlackMention  = regexp.MustCompile(`<@(U[A-Za-z0-9]+)(?:\|[^>]+)?>`)
+	reSpeakerPrefix = regexp.MustCompile(`(?i)^\s*(?:\*{1,2}\s*)?(?:alex|tim|ross|garth|assistant)\s*:\s*`)
 )
 
 const (
@@ -41,12 +42,26 @@ func formatOutgoingSlackMessage(s string, cfg *config.Config, selfSlackUserID st
 	if s == "" {
 		return s
 	}
+	s = stripSpeakerPrefixes(s)
 	s = convertGitHubBoldToSlack(s)
 	s = reBracketLinkMD.ReplaceAllString(s, "$1")
 	s = reMDHeading.ReplaceAllString(s, "")
 	s = substituteSquadAtMentions(s, cfg)
 	s = stripOutgoingSelfMentions(s, cfg, selfSlackUserID)
 	return strings.TrimSpace(s)
+}
+
+func stripSpeakerPrefixes(s string) string {
+	lines := strings.Split(s, "\n")
+	out := make([]string, 0, len(lines))
+	for _, line := range lines {
+		clean := strings.TrimSpace(reSpeakerPrefix.ReplaceAllString(line, ""))
+		if clean == "" {
+			continue
+		}
+		out = append(out, clean)
+	}
+	return strings.Join(out, "\n")
 }
 
 // normalizeSlackReply applies Slack formatting fixes plus a strict short-form cap.

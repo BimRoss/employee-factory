@@ -8,7 +8,7 @@ import (
 )
 
 // DefaultChutesModel is used when LLM_MODEL is unset and matches the default Chutes base URL.
-const DefaultChutesModel = "unsloth/Llama-3.2-1B-Instruct"
+const DefaultChutesModel = "kimi-k2.5-tee"
 
 // Config holds runtime settings for one employee instance.
 type Config struct {
@@ -86,6 +86,15 @@ type Config struct {
 	LLMChannelIncludeThreads   bool // enrich main-channel context with recent thread reply snippets
 	LLMChannelThreadParentScan int  // how many recent top-level messages to scan for reply_count (default 4)
 	LLMChannelThreadRepliesMax int  // max replies pulled per parent thread (default 15)
+	// Context recency weighting for channel/thread/squad context blocks.
+	// Newest context line weight is 1.0; older lines decay by factor per step.
+	LLMContextWeightDecay  float64 // default 0.5 (latest, 0.5x, 0.25x...)
+	LLMContextWeightWindow int     // default 3 (cap decay steps for older history)
+
+	// Handoff mention probability range used per reply.
+	// Runtime samples within this bounded range to make cross-agent pinging feel organic.
+	MultiagentHandoffMinProbability float64 // default 0.25
+	MultiagentHandoffMaxProbability float64 // default 0.75
 }
 
 // Load reads environment variables. Canonical keys (LLM_*, SLACK_*) take precedence;
@@ -140,6 +149,8 @@ func Load() (*Config, error) {
 		LLMChannelIncludeThreads:   parseBoolEnv("LLM_CHANNEL_INCLUDE_THREADS", false),
 		LLMChannelThreadParentScan: parseIntEnvMin("LLM_CHANNEL_THREAD_PARENT_SCAN", 4, 1),
 		LLMChannelThreadRepliesMax: parseIntEnvMin("LLM_CHANNEL_THREAD_REPLIES_MAX", 15, 1),
+		LLMContextWeightDecay:      parseFloat64EnvClamp("LLM_CONTEXT_WEIGHT_DECAY", 0.5, 0.1, 1.0),
+		LLMContextWeightWindow:     parseIntEnvMin("LLM_CONTEXT_WEIGHT_WINDOW", 3, 1),
 	}
 
 	if err := parseMultiagentEnv(cfg); err != nil {
@@ -287,6 +298,11 @@ func parseMultiagentEnv(cfg *Config) error {
 	cfg.MultiagentBroadcastRounds = parseIntEnvMin("MULTIAGENT_BROADCAST_ROUNDS", 1, 1)
 	if cfg.MultiagentBroadcastRounds > 24 {
 		cfg.MultiagentBroadcastRounds = 24
+	}
+	cfg.MultiagentHandoffMinProbability = parseFloat64EnvClamp("MULTIAGENT_HANDOFF_MIN_PROBABILITY", 0.25, 0, 1)
+	cfg.MultiagentHandoffMaxProbability = parseFloat64EnvClamp("MULTIAGENT_HANDOFF_MAX_PROBABILITY", 0.75, 0, 1)
+	if cfg.MultiagentHandoffMaxProbability < cfg.MultiagentHandoffMinProbability {
+		cfg.MultiagentHandoffMinProbability, cfg.MultiagentHandoffMaxProbability = cfg.MultiagentHandoffMaxProbability, cfg.MultiagentHandoffMinProbability
 	}
 	cfg.MultiagentSquadRunMax = parseIntEnvDefaultOrZero("MULTIAGENT_SQUAD_RUN_MAX", 12)
 	return nil

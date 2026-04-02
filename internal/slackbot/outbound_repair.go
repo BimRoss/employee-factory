@@ -9,7 +9,7 @@ import (
 
 var (
 	reInternalArtifactToken = regexp.MustCompile(`(?i)\b(?:alex|tim|ross|garth)-[a-z0-9-]{3,}\b`)
-	reInternalArtifactLine  = regexp.MustCompile(`(?i)^\s*(?:current state:|closer\b|the rule\b|tim-systems-delegation\b|ross:\b|alex:\b|garth:\b)`)
+	reInternalArtifactLine  = regexp.MustCompile(`(?i)^\s*(?:\*{1,2}\s*)?(?:current state:|closer\b|the rule\b|tim-systems-delegation\b|here is the rewritten slack reply:|conversation summary\b|step\s+\d+\s*:|ross\s*:|alex\s*:|garth\s*:|tim\s*:|assistant\s*:)\s*`)
 	reLikelyCutoffTail      = regexp.MustCompile(`(?i)\b(?:and|or|but|so|because|with|without|to|for|of|in|on|at|from|by|about|into|onto|whats|what's)\s*$`)
 )
 

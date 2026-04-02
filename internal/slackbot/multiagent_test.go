@@ -1,6 +1,7 @@
 package slackbot
 
 import (
+	"math"
 	"slices"
 	"testing"
 
@@ -205,5 +206,39 @@ func TestPrefixMatchesSquadSlots(t *testing.T) {
 	}
 	if !prefixMatchesSquadSlots(nil, slots, 0) {
 		t.Fatal("k=0 empty ok")
+	}
+}
+
+func TestSampleHandoffProbability_withinBounds(t *testing.T) {
+	const (
+		minP = 0.25
+		maxP = 0.75
+	)
+	for i := 0; i < 200; i++ {
+		p := sampleHandoffProbability(0.5, minP, maxP)
+		if p < minP || p > maxP {
+			t.Fatalf("sample out of bounds: %.4f", p)
+		}
+	}
+}
+
+func TestSampleHandoffProbability_zeroBaseDisables(t *testing.T) {
+	if p := sampleHandoffProbability(0, 0.25, 0.75); p != 0 {
+		t.Fatalf("expected zero probability when base is zero, got %.4f", p)
+	}
+}
+
+func TestRecencyWeight_defaultDecay(t *testing.T) {
+	if got := recencyWeight(0, 0.5, 3); math.Abs(got-1.0) > 0.0001 {
+		t.Fatalf("latest should weight 1.0, got %.4f", got)
+	}
+	if got := recencyWeight(1, 0.5, 3); math.Abs(got-0.5) > 0.0001 {
+		t.Fatalf("second latest should weight 0.5, got %.4f", got)
+	}
+	if got := recencyWeight(2, 0.5, 3); math.Abs(got-0.25) > 0.0001 {
+		t.Fatalf("third latest should weight 0.25, got %.4f", got)
+	}
+	if got := recencyWeight(9, 0.5, 3); math.Abs(got-0.25) > 0.0001 {
+		t.Fatalf("weights should cap at window floor, got %.4f", got)
 	}
 }
