@@ -461,6 +461,9 @@ func (b *Bot) channelHistoryContextBlock(ctx context.Context, channelID, current
 		if m.BotID != "" || m.User == b.botUserID {
 			role = "assistant"
 		}
+		if role == "assistant" && isOperationalModelErrorLine(text) {
+			continue
+		}
 		entries = append(entries, historyLine{role: role, text: text})
 	}
 	if len(entries) == 0 {
@@ -532,6 +535,9 @@ func (b *Bot) channelThreadSnippetsForMessages(ctx context.Context, channelID st
 			} else if sk, ok := squadKeyForSlackUser(b.cfg, tm.User); ok {
 				role = sk
 			}
+			if isOperationalModelErrorLine(t) {
+				continue
+			}
 			sub = append(sub, fmt.Sprintf("[%s] %s", role, t))
 			count++
 			if count >= maxR {
@@ -553,4 +559,32 @@ func (b *Bot) channelThreadSnippetsForMessages(ctx context.Context, channelID st
 		out = "…[thread snippets truncated]\n" + string(r[len(r)-maxSnip:])
 	}
 	return out
+}
+
+// isOperationalModelErrorLine detects short operator-facing fallback strings so they
+// are not recycled into future prompts via channel/thread history context.
+func isOperationalModelErrorLine(text string) bool {
+	t := strings.ToLower(strings.TrimSpace(text))
+	if t == "" {
+		return false
+	}
+	if strings.Contains(t, "model issue; ross needs to check logs") {
+		return true
+	}
+	if strings.Contains(t, "ross needs to check logs") && strings.Contains(t, "model") {
+		return true
+	}
+	if strings.HasPrefix(t, "the model provider returned http ") {
+		return true
+	}
+	if strings.HasPrefix(t, "the model rejected this request format (400)") {
+		return true
+	}
+	if strings.HasPrefix(t, "i hit a model error") ||
+		strings.HasPrefix(t, "i hit a model timeout") ||
+		strings.HasPrefix(t, "the model provider is temporarily unavailable") ||
+		strings.HasPrefix(t, "the model provider is temporarily overloaded") {
+		return true
+	}
+	return false
 }
