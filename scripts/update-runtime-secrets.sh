@@ -52,7 +52,7 @@ PY
 }
 
 build_multiagent_bot_user_ids() {
-  local order_raw="${MULTIAGENT_ORDER:-ross,tim,alex,garth}"
+  local order_raw="${MULTIAGENT_ORDER:-ross,tim,alex,garth,joanne}"
   local -a pairs=()
   local part key token_var token user_id
 
