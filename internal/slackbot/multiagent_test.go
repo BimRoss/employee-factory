@@ -370,3 +370,89 @@ func TestExpectedMissingAgentForSlot(t *testing.T) {
 		t.Fatalf("slot 0 should not report missing agent, got %q", got)
 	}
 }
+
+func testCfgSquadWithJoanne() *config.Config {
+	return &config.Config{
+		MultiagentEnabled: true,
+		MultiagentBotUserIDs: map[string]string{
+			"ross":   "UROSS001",
+			"tim":    "UTIM002",
+			"alex":   "UALEX003",
+			"joanne": "UJOANNE004",
+			"garth":  "UGARTH005",
+		},
+		MultiagentOrder: []string{"ross", "tim", "alex", "joanne", "garth"},
+	}
+}
+
+func TestResolveBroadcastCandidatePool_excludesOnboardingTarget(t *testing.T) {
+	cfg := testCfgSquadWithJoanne()
+	raw := "@everyone welcome joanne to the team"
+	got := resolveBroadcastCandidatePool(raw, cfg)
+	if slices.Contains(got, "joanne") {
+		t.Fatalf("expected joanne excluded from onboarding welcome pool, got %v", got)
+	}
+	if len(got) != 4 {
+		t.Fatalf("expected 4 participants after exclusion, got %d (%v)", len(got), got)
+	}
+}
+
+func TestResolveBroadcastCandidatePool_keepsPoolWhenNoTarget(t *testing.T) {
+	cfg := testCfgSquadWithJoanne()
+	raw := "@everyone welcome team"
+	got := resolveBroadcastCandidatePool(raw, cfg)
+	if len(got) != len(cfg.MultiagentOrder) {
+		t.Fatalf("expected full pool for generic welcome, got %v", got)
+	}
+	for _, key := range cfg.MultiagentOrder {
+		if !slices.Contains(got, key) {
+			t.Fatalf("expected %q in pool, got %v", key, got)
+		}
+	}
+}
+
+func TestResolveBroadcastCandidatePool_explicitMentionOverridesExclusion(t *testing.T) {
+	cfg := testCfgSquadWithJoanne()
+	raw := "<!everyone> welcome <@UJOANNE004>"
+	got := resolveBroadcastCandidatePool(raw, cfg)
+	if !slices.Contains(got, "joanne") {
+		t.Fatalf("expected explicit @mention to keep joanne eligible, got %v", got)
+	}
+}
+
+func TestResolveBroadcastCandidatePool_deterministic(t *testing.T) {
+	cfg := testCfgSquadWithJoanne()
+	raw := "@everyone welcome joanne to bimross"
+	a := resolveBroadcastCandidatePool(raw, cfg)
+	b := resolveBroadcastCandidatePool(raw, cfg)
+	if !slices.Equal(a, b) {
+		t.Fatalf("expected deterministic pool selection, got %v vs %v", a, b)
+	}
+}
+
+func TestResolveBroadcastCandidatePool_excludesWelcomingPhraseTarget(t *testing.T) {
+	cfg := testCfgSquadWithJoanne()
+	raw := "@everyone be a little more welcoming to joanne"
+	got := resolveBroadcastCandidatePool(raw, cfg)
+	if slices.Contains(got, "joanne") {
+		t.Fatalf("expected welcoming phrase to exclude joanne, got %v", got)
+	}
+}
+
+func TestResolveBroadcastCandidatePool_plainAtMentionOverridesExclusion(t *testing.T) {
+	cfg := testCfgSquadWithJoanne()
+	raw := "@everyone welcome @joanne"
+	got := resolveBroadcastCandidatePool(raw, cfg)
+	if !slices.Contains(got, "joanne") {
+		t.Fatalf("expected plain @joanne mention to override exclusion, got %v", got)
+	}
+}
+
+func TestRemovedPoolKeys(t *testing.T) {
+	before := []string{"ross", "tim", "alex", "joanne"}
+	after := []string{"ross", "tim", "alex"}
+	removed := removedPoolKeys(before, after)
+	if len(removed) != 1 || removed[0] != "joanne" {
+		t.Fatalf("expected removed=[joanne], got %v", removed)
+	}
+}

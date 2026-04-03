@@ -369,7 +369,17 @@ func (b *Bot) dispatchBroadcastMultiagent(ctx context.Context, channel, rawText 
 	if !broadcastMultiagentTrigger(rawText) {
 		return false
 	}
-	participants := shuffleBroadcastParticipants(messageTS, b.cfg.MultiagentOrder, b.cfg.MultiagentShuffleSecret)
+	basePool := orderedBroadcastPool(b.cfg)
+	pool := resolveBroadcastCandidatePool(rawText, b.cfg)
+	if removed := removedPoolKeys(basePool, pool); len(removed) > 0 {
+		log.Printf("multiagent: broadcast pool filtered employee=%s anchor=%s removed=%s trigger=%q",
+			strings.TrimSpace(b.cfg.EmployeeID),
+			strings.TrimSpace(messageTS),
+			strings.Join(removed, ","),
+			strings.TrimSpace(rawText),
+		)
+	}
+	participants := shuffleBroadcastParticipants(messageTS, pool, b.cfg.MultiagentShuffleSecret)
 	if len(participants) < 2 {
 		return false
 	}
@@ -380,7 +390,7 @@ func (b *Bot) dispatchBroadcastMultiagent(ctx context.Context, channel, rawText 
 	effectiveHandoff := b.cfg.MultiagentBroadcastHandoffProbability
 	if b.cfg.MultiagentBroadcastBranchingEnabled && shouldUseBroadcastBranchMode(
 		messageTS,
-		b.cfg.MultiagentOrder,
+		pool,
 		b.cfg.MultiagentShuffleSecret,
 		b.cfg.MultiagentBroadcastBranchingProbability,
 	) {
