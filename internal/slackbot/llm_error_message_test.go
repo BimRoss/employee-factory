@@ -11,14 +11,19 @@ import (
 
 func TestLLMErrorUserMessage(t *testing.T) {
 	tests := []struct {
-		name string
-		err  error
-		want string
+		name    string
+		err     error
+		wantAny []string
 	}{
 		{
 			name: "deadline exceeded",
 			err:  context.DeadlineExceeded,
-			want: "timeout",
+			wantAny: []string{
+				"sorry",
+				"try me again",
+				"one more time",
+				"one more ping",
+			},
 		},
 		{
 			name: "rate limited",
@@ -26,7 +31,7 @@ func TestLLMErrorUserMessage(t *testing.T) {
 				HTTPStatusCode: 429,
 				Err:            errors.New("too many requests"),
 			},
-			want: "rate-limiting",
+			wantAny: []string{"rate-limiting"},
 		},
 		{
 			name: "auth failure",
@@ -34,12 +39,12 @@ func TestLLMErrorUserMessage(t *testing.T) {
 				HTTPStatusCode: 401,
 				Err:            errors.New("unauthorized"),
 			},
-			want: "auth/config issue",
+			wantAny: []string{"auth/config issue"},
 		},
 		{
-			name: "generic fallback",
-			err:  errors.New("boom"),
-			want: "Please retry once",
+			name:    "generic fallback",
+			err:     errors.New("boom"),
+			wantAny: []string{"please retry once"},
 		},
 		{
 			name: "http 413 from APIError",
@@ -47,20 +52,33 @@ func TestLLMErrorUserMessage(t *testing.T) {
 				HTTPStatusCode: 413,
 				Message:        "too large",
 			},
-			want: "too large for the provider (413)",
+			wantAny: []string{"too large for the provider (413)"},
 		},
 		{
 			name: "status code embedded in string only",
 			err:  errors.New(`error, status code: 502, status: , message: upstream`),
-			want: "temporarily unavailable",
+			wantAny: []string{
+				"sorry",
+				"try me again",
+				"one more time",
+				"one more ping",
+			},
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			got := llmErrorUserMessage(tc.err)
-			if !strings.Contains(strings.ToLower(got), strings.ToLower(tc.want)) {
-				t.Fatalf("llmErrorUserMessage()=%q want substring %q", got, tc.want)
+			gotLower := strings.ToLower(got)
+			ok := false
+			for _, w := range tc.wantAny {
+				if strings.Contains(gotLower, strings.ToLower(w)) {
+					ok = true
+					break
+				}
+			}
+			if !ok {
+				t.Fatalf("llmErrorUserMessage()=%q want one of %v", got, tc.wantAny)
 			}
 		})
 	}

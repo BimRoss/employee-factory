@@ -164,6 +164,10 @@ func (b *Bot) onMessage(ctx context.Context, ev *slackevents.MessageEvent) {
 	if channel == "" || rawText == "" {
 		return
 	}
+	if !b.cfg.ChannelAllowed(channel) {
+		log.Printf("slack_route: path=skip_channel_not_allowed employee=%s channel=%s", strings.TrimSpace(b.cfg.EmployeeID), channel)
+		return
+	}
 
 	// BimRoss policy: one open channel (#chat-style), no DMs—ignore IMs.
 	if strings.HasPrefix(channel, "D") || ev.ChannelType == "im" || ev.ChannelType == "mpim" {
@@ -230,6 +234,10 @@ func (b *Bot) onAppMention(ctx context.Context, ev *slackevents.AppMentionEvent)
 	}
 	channel := strings.TrimSpace(ev.Channel)
 	if channel == "" {
+		return
+	}
+	if !b.cfg.ChannelAllowed(channel) {
+		log.Printf("slack_route: path=skip_channel_not_allowed employee=%s channel=%s", strings.TrimSpace(b.cfg.EmployeeID), channel)
 		return
 	}
 	if strings.HasPrefix(channel, "D") {
@@ -833,7 +841,10 @@ func isOperationalModelErrorLine(text string) bool {
 	if strings.HasPrefix(t, "i hit a model error") ||
 		strings.HasPrefix(t, "i hit a model timeout") ||
 		strings.HasPrefix(t, "the model provider is temporarily unavailable") ||
-		strings.HasPrefix(t, "the model provider is temporarily overloaded") {
+		strings.HasPrefix(t, "the model provider is temporarily overloaded") ||
+		strings.Contains(t, "try me again") ||
+		strings.Contains(t, "send that one more time") ||
+		strings.Contains(t, "give me one more ping") {
 		return true
 	}
 	return false

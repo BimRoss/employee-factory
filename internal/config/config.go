@@ -107,6 +107,13 @@ type Config struct {
 	// Runtime samples within this bounded range to make cross-agent pinging feel organic.
 	MultiagentHandoffMinProbability float64 // default 0.25
 	MultiagentHandoffMaxProbability float64 // default 0.75
+
+	// CompanyChannels is an optional channel->company runtime contract map loaded from COMPANY_CHANNELS_JSON.
+	// This is the first-pass scaffold for "one Slack channel = one company runtime".
+	CompanyChannels map[string]CompanyChannelRuntime
+	// CompanyChannelsEnforce drops events for channels that are not present in CompanyChannels.
+	// Keep false during migration so existing single-channel behavior remains unchanged.
+	CompanyChannelsEnforce bool
 }
 
 // Load reads environment variables. Canonical keys (LLM_*, SLACK_*) take precedence;
@@ -181,6 +188,9 @@ func Load() (*Config, error) {
 	}
 
 	if err := parseMultiagentEnv(cfg); err != nil {
+		return nil, err
+	}
+	if err := parseCompanyChannelsEnv(cfg); err != nil {
 		return nil, err
 	}
 

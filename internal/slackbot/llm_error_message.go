@@ -4,8 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"hash/fnv"
+	"math/rand"
 	"regexp"
 	"strconv"
+	"strings"
+	"time"
 
 	"github.com/bimross/employee-factory/internal/llm"
 	"github.com/sashabaranov/go-openai"
@@ -19,7 +23,7 @@ func llmErrorUserMessage(err error) string {
 		return "I hit a model error. Please retry once."
 	}
 	if errors.Is(err, context.DeadlineExceeded) {
-		return "I hit a model timeout. Please retry in a few seconds."
+		return humanTimeoutMessage("deadline_exceeded")
 	}
 	if errors.Is(err, context.Canceled) {
 		return "The model request was interrupted. Please retry."
@@ -39,15 +43,44 @@ func llmErrorUserMessage(err error) string {
 		case 400:
 			return "The model rejected this request format (400). Ross needs to inspect logs."
 		case 500, 502, 503, 504:
-			return "The model provider is temporarily unavailable. Please retry in a few seconds."
+			return humanTimeoutMessage(fmt.Sprintf("http_%d", status))
 		default:
 			return fmt.Sprintf("The model provider returned HTTP %d. Ross needs to check logs.", status)
 		}
 	}
 	if llm.IsTransientLLMError(err) {
-		return "The model provider is temporarily overloaded. Please retry in a few seconds."
+		return humanTimeoutMessage("transient_overload")
 	}
 	return "I hit a model error. Please retry once; if it repeats, Ross will check logs."
+}
+
+func humanTimeoutMessage(seed string) string {
+	// Keep this intentionally human and light in-channel.
+	choices := []string{
+		"Sorry, I was in the bathroom for a sec. Try me again.",
+		"Sorry, I zoned out for a moment. Can you send that one more time?",
+		"Sorry, I lagged there. Hit me again and I'll jump right in.",
+		"Sorry, I hiccuped for a second. Give me one more ping.",
+	}
+	return pickHumanChoice(choices, seed)
+}
+
+func pickHumanChoice(choices []string, seed string) string {
+	if len(choices) == 0 {
+		return "Sorry, I glitched for a second. Try me again."
+	}
+	s := strings.TrimSpace(seed)
+	if s == "" {
+		s = time.Now().Format(time.RFC3339Nano)
+	}
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(s))
+	// Mix in runtime jitter so repeated identical errors can still vary across posts.
+	x := int(h.Sum32()) ^ rand.New(rand.NewSource(time.Now().UnixNano())).Int()
+	if x < 0 {
+		x = -x
+	}
+	return choices[x%len(choices)]
 }
 
 func llmHTTPStatus(err error) (int, bool) {
