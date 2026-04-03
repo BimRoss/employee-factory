@@ -91,3 +91,50 @@ Phase 1 adds only ConfigMap keys; runtime Secrets stay the same.
 - `scripts/update-all-runtime-secrets.sh` syncs all five runtime Secrets in one pass.
 - Synced keys include `LLM_API_KEY`, or `OPENROUTER_API_KEY` / `OPENROUTER_KEY` (written into Secret as `LLM_API_KEY`), `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`, optional `SLACK_USER_TOKEN`, optional `LLM_MODEL`, and `MULTIAGENT_BOT_USER_IDS`.
 - `MULTIAGENT_BOT_USER_IDS` auto-resolves from each bot token via Slack `auth.test` (order from `MULTIAGENT_ORDER`, default `ross,tim,alex,garth,joanne`) unless explicitly provided.
+
+## Joanne Gmail send-email tooling (first vertical slice)
+
+Joanne can now send Gmail on command from Slack when OAuth runtime config is present.
+
+### Required env/runtime keys (Joanne only)
+
+- `JOANNE_EMAIL_ENABLED=true`
+- `GOOGLE_CLIENT_ID`
+- `GOOGLE_CLIENT_SECRET`
+- `GOOGLE_REFRESH_TOKEN`
+- `GOOGLE_SENDER_EMAIL`
+
+These are loaded from the `employee-factory-joanne-runtime` Secret (same secret flow as Slack and LLM keys).
+
+### Google setup (least privilege)
+
+1. Enable Gmail API on your Google Cloud project.
+2. Create OAuth client credentials for the Joanne mailbox flow.
+3. Grant scope `https://www.googleapis.com/auth/gmail.send`.
+4. Generate/store a refresh token for the Joanne account.
+
+Do not use password-based auth for this path.
+
+### Command contract (first pass)
+
+- Trigger intent: message includes "send email" / "send an email" / "draft email".
+- Optional explicit fields:
+  - `to: name@example.com`
+  - `subject: ...`
+  - `instruction: ...` (Joanne drafts body in her voice)
+  - `body: ...` (direct body override)
+- If `to` is omitted, recipient defaults to the requesting Slack user's profile email (`users.info`).
+
+### Cluster-first E2E runbook
+
+1. Populate `.env` with the five Joanne Google keys above.
+2. Sync Joanne runtime secret:
+   - `EMPLOYEE_ID=joanne ./scripts/update-runtime-secrets.sh`
+3. Restart or rollout Joanne deployment if needed:
+   - `kubectl -n employee-factory rollout restart deploy/employee-factory-joanne`
+   - `kubectl -n employee-factory rollout status deploy/employee-factory-joanne`
+4. In Slack, ask Joanne to send an email (with `instruction:` or `body:`).
+5. Verify:
+   - Slack confirmation from Joanne
+   - Recipient inbox received message
+   - Pod logs show `joanne_email: send success`

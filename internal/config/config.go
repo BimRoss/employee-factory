@@ -121,6 +121,13 @@ type Config struct {
 	RouterAvailabilityEnabled bool
 	// RouterLogOnly keeps router classification + decision traces enabled but does not enforce suppression.
 	RouterLogOnly bool
+
+	// Joanne email tooling (first vertical slice).
+	JoanneEmailEnabled bool
+	GoogleClientID     string
+	GoogleClientSecret string
+	GoogleRefreshToken string
+	GoogleSenderEmail  string
 }
 
 // Load reads environment variables. Canonical keys (LLM_*, SLACK_*) take precedence;
@@ -194,6 +201,11 @@ func Load() (*Config, error) {
 		LLMContextWeightWindow:                parseIntEnvMin("LLM_CONTEXT_WEIGHT_WINDOW", 3, 1),
 		RouterAvailabilityEnabled:             parseBoolEnv("ROUTER_AVAILABILITY_ENABLED", false),
 		RouterLogOnly:                         parseBoolEnv("ROUTER_LOG_ONLY", false),
+		JoanneEmailEnabled:                    parseBoolEnv("JOANNE_EMAIL_ENABLED", false),
+		GoogleClientID:                        strings.TrimSpace(os.Getenv("GOOGLE_CLIENT_ID")),
+		GoogleClientSecret:                    strings.TrimSpace(os.Getenv("GOOGLE_CLIENT_SECRET")),
+		GoogleRefreshToken:                    strings.TrimSpace(os.Getenv("GOOGLE_REFRESH_TOKEN")),
+		GoogleSenderEmail:                     strings.TrimSpace(os.Getenv("GOOGLE_SENDER_EMAIL")),
 	}
 
 	if err := parseMultiagentEnv(cfg); err != nil {
@@ -220,6 +232,9 @@ func Load() (*Config, error) {
 	}
 	if cfg.SlackAppToken == "" {
 		return nil, fmt.Errorf("set SLACK_APP_TOKEN or employee-prefixed _SLACK_APP_TOKEN")
+	}
+	if err := validateJoanneEmailConfig(cfg); err != nil {
+		return nil, err
 	}
 
 	return cfg, nil
@@ -533,4 +548,29 @@ func parseFloat64EnvClamp(key string, def, min, max float64) float64 {
 		return max
 	}
 	return f
+}
+
+func validateJoanneEmailConfig(cfg *Config) error {
+	if cfg == nil {
+		return nil
+	}
+	if !cfg.JoanneEmailEnabled {
+		return nil
+	}
+	if !strings.EqualFold(strings.TrimSpace(cfg.EmployeeID), "joanne") {
+		return nil
+	}
+	if cfg.GoogleClientID == "" {
+		return fmt.Errorf("set GOOGLE_CLIENT_ID when JOANNE_EMAIL_ENABLED=true for EMPLOYEE_ID=joanne")
+	}
+	if cfg.GoogleClientSecret == "" {
+		return fmt.Errorf("set GOOGLE_CLIENT_SECRET when JOANNE_EMAIL_ENABLED=true for EMPLOYEE_ID=joanne")
+	}
+	if cfg.GoogleRefreshToken == "" {
+		return fmt.Errorf("set GOOGLE_REFRESH_TOKEN when JOANNE_EMAIL_ENABLED=true for EMPLOYEE_ID=joanne")
+	}
+	if cfg.GoogleSenderEmail == "" {
+		return fmt.Errorf("set GOOGLE_SENDER_EMAIL when JOANNE_EMAIL_ENABLED=true for EMPLOYEE_ID=joanne")
+	}
+	return nil
 }

@@ -10,6 +10,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/bimross/employee-factory/internal/config"
+	"github.com/bimross/employee-factory/internal/gmailsender"
 	"github.com/bimross/employee-factory/internal/llm"
 	"github.com/bimross/employee-factory/internal/persona"
 	"github.com/bimross/employee-factory/internal/router"
@@ -71,12 +72,22 @@ type Bot struct {
 	threadOwner threadstore.OwnerStore
 	// generalAutoReplyLock coordinates cross-pod single-response behavior for plain #general messages.
 	generalAutoReplyLock *generalAutoReplyLocker
+	gmailSender          *gmailsender.Sender
 }
 
 // New constructs a Socket Mode bot. owner may be nil (human-root owner is inferred from thread history).
 func New(cfg *config.Config, lm *llm.EmployeeLLM, p *persona.Loader, owner threadstore.OwnerStore) *Bot {
 	api := slack.New(cfg.SlackBotToken, slack.OptionAppLevelToken(cfg.SlackAppToken))
 	window := time.Duration(cfg.SlackOutboundWindowSec) * time.Second
+	var sender *gmailsender.Sender
+	if strings.EqualFold(strings.TrimSpace(cfg.EmployeeID), "joanne") && cfg.JoanneEmailEnabled {
+		s, err := gmailsender.New(cfg)
+		if err != nil {
+			log.Printf("gmail sender init: %v", err)
+		} else {
+			sender = s
+		}
+	}
 	return &Bot{
 		cfg:                      cfg,
 		api:                      api,
@@ -87,6 +98,7 @@ func New(cfg *config.Config, lm *llm.EmployeeLLM, p *persona.Loader, owner threa
 		threadOwner:              owner,
 		generalAutoReplyLock:     newGeneralAutoReplyLocker(strings.TrimSpace(cfg.RedisURL)),
 		activeBroadcastByChannel: map[string]int{},
+		gmailSender:              sender,
 	}
 }
 
@@ -188,6 +200,9 @@ func (b *Bot) onMessage(ctx context.Context, ev *slackevents.MessageEvent) {
 		RawText:   rawText,
 		Phase:     routerPhaseIngress,
 	}) {
+		return
+	}
+	if b.tryHandleJoanneSendEmail(ctx, channel, rawText, ev.User, ev.TimeStamp, "") {
 		return
 	}
 	if ts := strings.TrimSpace(ev.ThreadTimeStamp); ts != "" {
@@ -295,6 +310,9 @@ func (b *Bot) onAppMention(ctx context.Context, ev *slackevents.AppMentionEvent)
 		RawText:   rawText,
 		Phase:     routerPhaseIngress,
 	}) {
+		return
+	}
+	if b.tryHandleJoanneSendEmail(ctx, channel, rawText, ev.User, ev.TimeStamp, strings.TrimSpace(ev.ThreadTimeStamp)) {
 		return
 	}
 	if ts := strings.TrimSpace(ev.ThreadTimeStamp); ts != "" {

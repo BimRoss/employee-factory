@@ -8,6 +8,7 @@ require (
 	github.com/redis/go-redis/v9 v9.18.0
 	github.com/sashabaranov/go-openai v1.41.2
 	github.com/slack-go/slack v0.17.3
+	golang.org/x/oauth2 v0.21.0
 )
 
 require (
