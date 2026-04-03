@@ -121,3 +121,35 @@ func TestGeneralAutoReplyFailoverShouldPost(t *testing.T) {
 		t.Fatal("failover should not post when already claimed")
 	}
 }
+
+func TestShouldSkipGeneralAutoReply_ClosureIntent(t *testing.T) {
+	cases := []string{
+		"I should be good thanks garth",
+		"all good thanks",
+		"No problem",
+		"that helps, appreciate it",
+	}
+	for _, tc := range cases {
+		skip, reason := shouldSkipGeneralAutoReply(tc)
+		if !skip {
+			t.Fatalf("expected skip for closure text: %q", tc)
+		}
+		if reason != "closure_intent" {
+			t.Fatalf("expected closure_intent reason for %q, got %q", tc, reason)
+		}
+	}
+}
+
+func TestShouldSkipGeneralAutoReply_AskSignalOverridesClosure(t *testing.T) {
+	cases := []string{
+		"thanks, can you draft a quick experiment?",
+		"all good, but what do you think we should ship next?",
+		"appreciate it - could you outline the next step?",
+	}
+	for _, tc := range cases {
+		skip, reason := shouldSkipGeneralAutoReply(tc)
+		if skip {
+			t.Fatalf("did not expect skip for ask text: %q reason=%q", tc, reason)
+		}
+	}
+}

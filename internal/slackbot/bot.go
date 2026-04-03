@@ -410,6 +410,10 @@ func (b *Bot) dispatchGeneralAutoReply(ctx context.Context, channel, rawText str
 		log.Printf("general_auto_reply: skip reason=ineligible employee=%s channel=%s user=%s", strings.TrimSpace(b.cfg.EmployeeID), strings.TrimSpace(channel), strings.TrimSpace(ev.User))
 		return false
 	}
+	if skip, reason := shouldSkipGeneralAutoReply(rawText); skip {
+		log.Printf("general_auto_reply: skip reason=%s employee=%s channel=%s anchor=%s", reason, strings.TrimSpace(b.cfg.EmployeeID), strings.TrimSpace(channel), strings.TrimSpace(ev.TimeStamp))
+		return false
+	}
 	anchorTS := strings.TrimSpace(ev.TimeStamp)
 	if anchorTS == "" {
 		log.Printf("general_auto_reply: skip reason=empty_anchor employee=%s", strings.TrimSpace(b.cfg.EmployeeID))
