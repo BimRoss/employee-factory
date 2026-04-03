@@ -66,6 +66,43 @@ func TestFormatOutgoingSlackMessage_squadMentions(t *testing.T) {
 	}
 }
 
+func TestFormatOutgoingSlackMessage_addressedBareNameGetsMention(t *testing.T) {
+	cfg := &config.Config{
+		EmployeeID: "tim",
+		MultiagentBotUserIDs: map[string]string{
+			"ross":  "U0APX108QE7",
+			"tim":   "U0AQ10R2H8E",
+			"alex":  "U0APSMH05B5",
+			"garth": "UGARTH0001",
+		},
+	}
+	in := "I agree. Ross, can you help with this checklist?"
+	out := formatOutgoingSlackMessage(in, cfg, "U0AQ10R2H8E")
+	if !strings.Contains(out, "<@U0APX108QE7>, can you help with this checklist?") {
+		t.Fatalf("expected addressed bare name to become mention, got %q", out)
+	}
+	if strings.Contains(out, " Ross,") {
+		t.Fatalf("expected plain addressed name removed, got %q", out)
+	}
+}
+
+func TestFormatOutgoingSlackMessage_narrativeNameDoesNotAutoMention(t *testing.T) {
+	cfg := &config.Config{
+		EmployeeID: "tim",
+		MultiagentBotUserIDs: map[string]string{
+			"ross":  "U0APX108QE7",
+			"tim":   "U0AQ10R2H8E",
+			"alex":  "U0APSMH05B5",
+			"garth": "UGARTH0001",
+		},
+	}
+	in := "Alex asked Ross to review rollout status."
+	out := formatOutgoingSlackMessage(in, cfg, "U0AQ10R2H8E")
+	if strings.Contains(out, "<@U0APX108QE7>") {
+		t.Fatalf("expected narrative reference not to auto-mention, got %q", out)
+	}
+}
+
 func TestFormatOutgoingSlackMessage_stripsSelfMention(t *testing.T) {
 	cfg := &config.Config{
 		EmployeeID: "tim",

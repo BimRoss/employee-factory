@@ -48,6 +48,7 @@ func formatOutgoingSlackMessage(s string, cfg *config.Config, selfSlackUserID st
 	s = reBracketLinkMD.ReplaceAllString(s, "$1")
 	s = reMDHeading.ReplaceAllString(s, "")
 	s = substituteSquadAtMentions(s, cfg)
+	s = substituteAddressedSquadNamesAsMentions(s, cfg)
 	s = stripOutgoingSelfMentions(s, cfg, selfSlackUserID)
 	return strings.TrimSpace(s)
 }
@@ -287,6 +288,42 @@ func substituteSquadAtMentions(s string, cfg *config.Config) string {
 		token := "<@" + uid + ">"
 		re := regexp.MustCompile(`(?i)@` + regexp.QuoteMeta(key) + `\b`)
 		out = re.ReplaceAllString(out, token)
+	}
+	return out
+}
+
+// substituteAddressedSquadNamesAsMentions upgrades direct address forms like
+// "Ross, can you..." into Slack mention tokens so pings are not lost when the
+// model omits "@".
+//
+// Conservatively scoped: converts only when the name starts a sentence/line and
+// is followed by comma/colon (e.g. "Ross," or "Tim:"). Narrative references
+// such as "Alex asked Ross to..." are left untouched.
+func substituteAddressedSquadNamesAsMentions(s string, cfg *config.Config) string {
+	if cfg == nil || len(cfg.MultiagentBotUserIDs) == 0 {
+		return s
+	}
+	selfKey := strings.ToLower(strings.TrimSpace(cfg.EmployeeID))
+	var keys []string
+	for k := range cfg.MultiagentBotUserIDs {
+		uid := strings.TrimSpace(cfg.MultiagentBotUserIDs[k])
+		if uid == "" {
+			continue
+		}
+		keys = append(keys, k)
+	}
+	sort.Slice(keys, func(i, j int) bool { return len(keys[i]) > len(keys[j]) })
+	out := s
+	for _, key := range keys {
+		if selfKey != "" && strings.EqualFold(key, selfKey) {
+			continue
+		}
+		uid := strings.TrimSpace(cfg.MultiagentBotUserIDs[key])
+		if uid == "" {
+			continue
+		}
+		re := regexp.MustCompile(`(?im)(^|[\n.!?]\s*)` + regexp.QuoteMeta(key) + `(\s*[:,])`)
+		out = re.ReplaceAllString(out, "${1}<@"+uid+">${2}")
 	}
 	return out
 }
