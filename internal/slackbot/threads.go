@@ -288,6 +288,8 @@ func (b *Bot) handleThreadMessage(ctx context.Context, channel, userID, rawText,
 	if tc != "" {
 		userText = tc + "\n\n" + userText
 	}
+	priorSelf := latestPriorEmployeeMessageInThread(msgs, messageTS, cfg.EmployeeID, b.botUserID, cfg)
+	userText = prependRethinkCue(userText, rawText, priorSelf)
 	userText = prependHostilityCue(userText, rawText)
 	logPath := "thread"
 	if allowSquadFollowup {

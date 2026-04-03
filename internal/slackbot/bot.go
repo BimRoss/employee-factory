@@ -31,6 +31,8 @@ Voice: Match the tone, diction, and reasoning style of the system persona aboveâ
 
 Hostility protocol: If the user is verbally aggressive toward you, do not use appeasing filler (for example, "okay, I can help with that"). Use one brief firm pushback line with light emotional mirroring, then immediately redirect to a concrete next action.
 
+Rethink protocol: If the prompt includes "Rethink trigger", your first line must explicitly acknowledge reassessment and reflect the user's correction. Your second line must provide an updated position/confidence and one concrete next action. Do not repeat your prior thesis unchanged.
+
 Self-reference: In plain text, refer to yourself as "me" (or "I"), never by your own name (Ross/Tim/Alex/Garth).
 
 Company name: BimRoss (capital B, capital R). Never write BenRoss, Ben Ross, BIMRAS, or Bimross.
@@ -576,6 +578,8 @@ func (b *Bot) postLLMReplyWithResult(ctx context.Context, channel, userText, mes
 	if tc := b.channelHistoryContextBlock(ctx, channel, messageTS); tc != "" {
 		userPayload = tc + "\n\n" + userPayload
 	}
+	priorSelf := b.latestPriorEmployeeMessageInChannel(ctx, channel, messageTS)
+	userPayload = prependRethinkCue(userPayload, userText, priorSelf)
 	userPayload = prependHostilityCue(userPayload, userText)
 	log.Printf("context_build: path=channel employee=%s channel=%s payload_runes=%d",
 		strings.TrimSpace(b.cfg.EmployeeID), strings.TrimSpace(channel), utf8.RuneCountInString(userPayload))
@@ -641,6 +645,38 @@ func (b *Bot) withLLMTimeout(ctx context.Context) (context.Context, context.Canc
 		return context.WithTimeout(ctx, 35*time.Second)
 	}
 	return context.WithTimeout(ctx, time.Duration(b.cfg.LLMReplyTimeoutSec)*time.Second)
+}
+
+func (b *Bot) latestPriorEmployeeMessageInChannel(ctx context.Context, channelID, currentMsgTS string) string {
+	if strings.TrimSpace(channelID) == "" || strings.TrimSpace(currentMsgTS) == "" {
+		return ""
+	}
+	limit := b.cfg.LLMThreadMaxMessages
+	if limit < 10 {
+		limit = 10
+	}
+	params := &slack.GetConversationHistoryParameters{
+		ChannelID: channelID,
+		Latest:    currentMsgTS,
+		Inclusive: false,
+		Limit:     limit,
+	}
+	resp, err := b.api.GetConversationHistoryContext(ctx, params)
+	if err != nil {
+		return ""
+	}
+	for _, m := range resp.Messages {
+		if strings.TrimSpace(m.Text) == "" {
+			continue
+		}
+		if m.User == b.botUserID {
+			return strings.TrimSpace(m.Text)
+		}
+		if k, ok := squadKeyForSlackUser(b.cfg, m.User); ok && strings.EqualFold(k, b.cfg.EmployeeID) {
+			return strings.TrimSpace(m.Text)
+		}
+	}
+	return ""
 }
 
 func (b *Bot) beginBroadcast(channel string) {

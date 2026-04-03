@@ -448,6 +448,8 @@ func (b *Bot) runMultiagentSession(ctx context.Context, channel, rawText string,
 		if policy := buildMultiagentTurnPolicy(selfKey, k, len(slots)); policy != "" {
 			userPayload = policy + "\n\n" + userPayload
 		}
+		priorSelf := latestPriorEmployeeMessageInSquadMessages(msgs, b.botUserID)
+		userPayload = prependRethinkCue(userPayload, userQuestion, priorSelf)
 		userPayload = prependHostilityCue(userPayload, userQuestion)
 		if b.useAlexHints() && b.cfg.LLMAlexHints {
 			userPayload = router.WrapAlexUserMessage(userPayload)
