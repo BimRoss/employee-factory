@@ -19,6 +19,7 @@ var (
 	reBracketLinkMD = regexp.MustCompile(`\[([^\]]+)\]\([^)]+\)`)
 	reSlackMention  = regexp.MustCompile(`<@(U[A-Za-z0-9]+)(?:\|[^>]+)?>`)
 	reSpeakerPrefix = regexp.MustCompile(`(?i)^\s*(?:\*{1,2}\s*)?(?:alex|tim|ross|garth|assistant)\s*:\s*`)
+	reBracketAssignmentArtifact = regexp.MustCompile(`(?im)^\s*\[[a-z][a-z0-9_-]{0,7}\s*=\s*[a-z][a-z0-9_-]{0,19}\]\s*`)
 	reWordToken     = regexp.MustCompile(`(?i)[a-z][a-z'_-]*`)
 )
 
@@ -44,6 +45,7 @@ func formatOutgoingSlackMessage(s string, cfg *config.Config, selfSlackUserID st
 		return s
 	}
 	s = stripSpeakerPrefixes(s)
+	s = stripBracketAssignmentArtifacts(s)
 	s = convertGitHubBoldToSlack(s)
 	s = reBracketLinkMD.ReplaceAllString(s, "$1")
 	s = reMDHeading.ReplaceAllString(s, "")
@@ -51,6 +53,13 @@ func formatOutgoingSlackMessage(s string, cfg *config.Config, selfSlackUserID st
 	s = substituteAddressedSquadNamesAsMentions(s, cfg)
 	s = stripOutgoingSelfMentions(s, cfg, selfSlackUserID)
 	return strings.TrimSpace(s)
+}
+
+func stripBracketAssignmentArtifacts(s string) string {
+	if s == "" {
+		return s
+	}
+	return strings.TrimSpace(reBracketAssignmentArtifact.ReplaceAllString(s, ""))
 }
 
 func stripSpeakerPrefixes(s string) string {

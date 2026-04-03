@@ -28,6 +28,9 @@ func outboundNeedsRepair(reply string) (bool, string) {
 	if reInternalArtifactToken.MatchString(s) {
 		return true, "internal_artifact_token"
 	}
+	if reBracketAssignmentArtifact.MatchString(s) {
+		return true, "bracket_assignment_artifact"
+	}
 	lines := strings.Split(s, "\n")
 	for _, line := range lines {
 		if reInternalArtifactLine.MatchString(strings.TrimSpace(line)) {
@@ -55,6 +58,7 @@ func outboundNeedsRepair(reply string) (bool, string) {
 }
 
 func stripInternalArtifactLines(s string) string {
+	s = reBracketAssignmentArtifact.ReplaceAllString(s, "")
 	var out []string
 	for _, line := range strings.Split(strings.TrimSpace(s), "\n") {
 		t := strings.TrimSpace(line)

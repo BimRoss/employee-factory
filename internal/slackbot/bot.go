@@ -29,6 +29,8 @@ Formatting: Slack uses mrkdwn (not GitHub Markdown). For bold use *single* aster
 
 Voice: Match the tone, diction, and reasoning style of the system persona above—this is who you are in Slack. Not a generic assistant.
 
+Hostility protocol: If the user is verbally aggressive toward you, do not use appeasing filler (for example, "okay, I can help with that"). Use one brief firm pushback line with light emotional mirroring, then immediately redirect to a concrete next action.
+
 Self-reference: In plain text, refer to yourself as "me" (or "I"), never by your own name (Ross/Tim/Alex/Garth).
 
 Company name: BimRoss (capital B, capital R). Never write BenRoss, Ben Ross, BIMRAS, or Bimross.
@@ -574,6 +576,7 @@ func (b *Bot) postLLMReplyWithResult(ctx context.Context, channel, userText, mes
 	if tc := b.channelHistoryContextBlock(ctx, channel, messageTS); tc != "" {
 		userPayload = tc + "\n\n" + userPayload
 	}
+	userPayload = prependHostilityCue(userPayload, userText)
 	log.Printf("context_build: path=channel employee=%s channel=%s payload_runes=%d",
 		strings.TrimSpace(b.cfg.EmployeeID), strings.TrimSpace(channel), utf8.RuneCountInString(userPayload))
 

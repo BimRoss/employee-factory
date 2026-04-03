@@ -212,6 +212,17 @@ func TestFormatOutgoingSlackMessage_stripsSpeakerPrefixes(t *testing.T) {
 	}
 }
 
+func TestFormatOutgoingSlackMessage_stripsBracketAssignmentArtifact(t *testing.T) {
+	in := "[a=me] Point being, prove the billing automation before chasing features."
+	out := formatOutgoingSlackMessage(in, nil, "")
+	if strings.Contains(strings.ToLower(out), "[a=me]") {
+		t.Fatalf("expected bracket assignment artifact stripped, got %q", out)
+	}
+	if !strings.HasPrefix(out, "Point being") {
+		t.Fatalf("expected remaining content preserved, got %q", out)
+	}
+}
+
 func TestEnforceMultiagentMentionPolicy_requireHandoff(t *testing.T) {
 	cfg := &config.Config{
 		EmployeeID: "ross",

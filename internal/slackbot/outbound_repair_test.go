@@ -45,3 +45,13 @@ func TestOutboundNeedsRepair_detectsAwkwardFirstPersonGrammar(t *testing.T) {
 		t.Fatalf("expected awkward grammar reason, got %q", reason)
 	}
 }
+
+func TestOutboundNeedsRepair_detectsBracketAssignmentArtifact(t *testing.T) {
+	flagged, reason := outboundNeedsRepair("[a=me] Point being, ship it.")
+	if !flagged {
+		t.Fatal("expected bracket assignment artifact to be flagged")
+	}
+	if reason != "bracket_assignment_artifact" {
+		t.Fatalf("expected bracket assignment artifact reason, got %q", reason)
+	}
+}

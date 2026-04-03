@@ -288,6 +288,7 @@ func (b *Bot) handleThreadMessage(ctx context.Context, channel, userID, rawText,
 	if tc != "" {
 		userText = tc + "\n\n" + userText
 	}
+	userText = prependHostilityCue(userText, rawText)
 	logPath := "thread"
 	if allowSquadFollowup {
 		logPath = "thread_squad_followup"
