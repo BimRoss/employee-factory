@@ -33,6 +33,8 @@ type Config struct {
 	LLMRetryBackoffMS int
 	// LLMFallbackModel is a smaller or warmer OpenAI-compatible model id (same LLM_BASE_URL and LLM_API_KEY). Empty disables fallback.
 	LLMFallbackModel string
+	// LLMReplyTimeoutSec bounds each completion call so one stalled provider request cannot block event handling forever.
+	LLMReplyTimeoutSec int
 
 	// Recent channel history (conversations.history) for linear context; env keys LLM_THREAD_*.
 	LLMThreadMaxMessages int
@@ -145,6 +147,7 @@ func Load() (*Config, error) {
 		LLMMaxRetries:             parseIntEnvMinAllowZero("LLM_MAX_RETRIES", 2, 0),
 		LLMRetryBackoffMS:         parseIntEnvMin("LLM_RETRY_BACKOFF_MS", 400, 50),
 		LLMFallbackModel:          strings.TrimSpace(os.Getenv("LLM_FALLBACK_MODEL")),
+		LLMReplyTimeoutSec:        parseIntEnvMin("LLM_REPLY_TIMEOUT_SEC", 35, 5),
 		LLMThreadMaxMessages:      parseIntEnvMin("LLM_THREAD_MAX_MESSAGES", 25, 1),
 		LLMThreadMaxRunes:         parseIntEnvMin("LLM_THREAD_MAX_RUNES", 16000, 256),
 		LLMAlexHints:              parseBoolEnv("LLM_ALEX_HINTS", true),

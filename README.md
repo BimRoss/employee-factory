@@ -6,7 +6,7 @@ The repo is the source of truth for behavior—read the code and `.env.example` 
 
 ## LLM model and resilience (OpenRouter)
 
-Default model is `google/gemini-2.0-flash-001` via OpenRouter (`LLM_BASE_URL` defaults to `https://openrouter.ai/api/v1`; override via `LLM_MODEL` when needed). Chat completions retry on transient provider errors (`429`, `502`, `503`, plus temporary-capacity responses) with exponential backoff. `LLM_FALLBACK_MODEL` is optional and can be left empty for single-model behavior (recommended for this Slack flow). Configure via `LLM_MAX_RETRIES`, `LLM_RETRY_BACKOFF_MS`, and `LLM_FALLBACK_MODEL` (see `.env.example`).
+Default model is `google/gemini-2.0-flash-001` via OpenRouter (`LLM_BASE_URL` defaults to `https://openrouter.ai/api/v1`; override via `LLM_MODEL` when needed). Chat completions retry on transient provider errors (`429`, `502`, `503`, plus temporary-capacity responses) with exponential backoff. `LLM_FALLBACK_MODEL` is optional and can be left empty for single-model behavior (recommended for this Slack flow). Each completion call is bounded by `LLM_REPLY_TIMEOUT_SEC` so a stalled provider request cannot block Slack event handling indefinitely. Configure via `LLM_MAX_RETRIES`, `LLM_RETRY_BACKOFF_MS`, `LLM_REPLY_TIMEOUT_SEC`, and `LLM_FALLBACK_MODEL` (see `.env.example`).
 
 ## Multi-agent Slack (`<!everyone>` / `<!channel>`)
 

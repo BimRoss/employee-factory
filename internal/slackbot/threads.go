@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/bimross/employee-factory/internal/config"
 	"github.com/bimross/employee-factory/internal/router"
@@ -256,6 +257,8 @@ func (b *Bot) handleThreadMessage(ctx context.Context, channel, userID, rawText,
 	if tc != "" {
 		userText = tc + "\n\n" + userText
 	}
+	log.Printf("context_build: path=thread employee=%s channel=%s payload_runes=%d",
+		strings.TrimSpace(cfg.EmployeeID), strings.TrimSpace(channel), utf8.RuneCountInString(userText))
 
 	b.postLLMReplyInThread(ctx, channel, userText, messageTS, threadTS)
 	return true
@@ -276,7 +279,12 @@ func (b *Bot) postLLMReplyInThread(ctx context.Context, channel, userText, messa
 		persona = "You are a helpful assistant."
 	}
 
-	reply, err := b.llm.Reply(ctx, persona, slackReplySuffix, userText)
+	llmCtx, cancelLLM := b.withLLMTimeout(ctx)
+	startLLM := time.Now()
+	reply, err := b.llm.Reply(llmCtx, persona, slackReplySuffix, userText)
+	cancelLLM()
+	log.Printf("llm_call: path=thread employee=%s ms=%d err=%t payload_runes=%d",
+		strings.TrimSpace(b.cfg.EmployeeID), time.Since(startLLM).Milliseconds(), err != nil, utf8.RuneCountInString(userText))
 	if err != nil {
 		log.Printf("llm reply error (employee=%s): %v", strings.TrimSpace(b.cfg.EmployeeID), err)
 		opts := []slack.MsgOption{
@@ -295,7 +303,10 @@ func (b *Bot) postLLMReplyInThread(ctx context.Context, channel, userText, messa
 	if reply == "" {
 		reply = "…"
 	}
+	startRepair := time.Now()
 	reply = b.repairOutboundReply(ctx, persona, userText, reply)
+	log.Printf("repair_call: path=thread employee=%s ms=%d",
+		strings.TrimSpace(b.cfg.EmployeeID), time.Since(startRepair).Milliseconds())
 	reply = normalizeSlackReply(reply, b.cfg, b.botUserID)
 	if b.cfg.MultiagentConfigured() {
 		handoff, _ := shouldHandoff(
@@ -310,10 +321,15 @@ func (b *Bot) postLLMReplyInThread(ctx context.Context, channel, userText, messa
 		slack.MsgOptionText(reply, false),
 		slack.MsgOptionTS(threadTS),
 	}
+	startPost := time.Now()
 	if _, _, err := b.api.PostMessageContext(ctx, channel, opts...); err != nil {
+		log.Printf("slack_post: path=thread employee=%s ms=%d err=%t",
+			strings.TrimSpace(b.cfg.EmployeeID), time.Since(startPost).Milliseconds(), err != nil)
 		log.Printf("slack post message: %v", err)
 		return
 	}
+	log.Printf("slack_post: path=thread employee=%s ms=%d err=false",
+		strings.TrimSpace(b.cfg.EmployeeID), time.Since(startPost).Milliseconds())
 	if b.outbound != nil {
 		b.outbound.record(time.Now())
 	}

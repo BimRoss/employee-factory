@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/bimross/employee-factory/internal/config"
 	"github.com/bimross/employee-factory/internal/llm"
@@ -55,6 +56,9 @@ type Bot struct {
 	botUserID string
 	mu        sync.Mutex
 	outbound  *outboundGate
+	routeMu   sync.Mutex
+	// activeBroadcastByChannel tracks in-flight broadcast sessions per channel.
+	activeBroadcastByChannel map[string]int
 
 	// threadOwner persists human-root thread owners when Redis is configured (optional cache).
 	threadOwner threadstore.OwnerStore
@@ -75,6 +79,7 @@ func New(cfg *config.Config, lm *llm.EmployeeLLM, p *persona.Loader, owner threa
 		outbound:             newOutboundGate(window, cfg.SlackOutboundMaxPerWindow),
 		threadOwner:          owner,
 		generalAutoReplyLock: newGeneralAutoReplyLocker(strings.TrimSpace(cfg.RedisURL)),
+		activeBroadcastByChannel: map[string]int{},
 	}
 }
 
@@ -261,6 +266,11 @@ func (b *Bot) trySquadBotMentionTrigger(ctx context.Context, channel, rawText st
 	if !strings.Contains(rawText, mention) {
 		return false
 	}
+	if b.isBroadcastActive(channel) {
+		log.Printf("multiagent: skip bot-mention followup reason=broadcast_active employee=%s channel=%s anchor=%s",
+			strings.TrimSpace(b.cfg.EmployeeID), strings.TrimSpace(channel), strings.TrimSpace(ev.TimeStamp))
+		return true
+	}
 
 	n, err := b.squadRunCountThrough(ctx, channel, ev.TimeStamp)
 	if err != nil {
@@ -364,7 +374,11 @@ func (b *Bot) dispatchBroadcastMultiagent(ctx context.Context, channel, rawText 
 	) {
 		effectiveHandoff = b.cfg.MultiagentBroadcastBranchingHandoffProbability
 	}
-	go b.runMultiagentSession(ctx, channel, rawText, messageTS, participants, rounds, effectiveHandoff)
+	go func() {
+		b.beginBroadcast(channel)
+		defer b.endBroadcast(channel)
+		b.runMultiagentSession(ctx, channel, rawText, messageTS, participants, rounds, effectiveHandoff)
+	}()
 	return true
 }
 
@@ -548,8 +562,15 @@ func (b *Bot) postLLMReplyWithResult(ctx context.Context, channel, userText, mes
 	if tc := b.channelHistoryContextBlock(ctx, channel, messageTS); tc != "" {
 		userPayload = tc + "\n\n" + userPayload
 	}
+	log.Printf("context_build: path=channel employee=%s channel=%s payload_runes=%d",
+		strings.TrimSpace(b.cfg.EmployeeID), strings.TrimSpace(channel), utf8.RuneCountInString(userPayload))
 
-	reply, err := b.llm.Reply(ctx, persona, slackReplySuffix, userPayload)
+	llmCtx, cancelLLM := b.withLLMTimeout(ctx)
+	startLLM := time.Now()
+	reply, err := b.llm.Reply(llmCtx, persona, slackReplySuffix, userPayload)
+	cancelLLM()
+	log.Printf("llm_call: path=channel employee=%s ms=%d err=%t",
+		strings.TrimSpace(b.cfg.EmployeeID), time.Since(startLLM).Milliseconds(), err != nil)
 	if err != nil {
 		log.Printf("llm reply error (employee=%s): %v", strings.TrimSpace(b.cfg.EmployeeID), err)
 		opts := []slack.MsgOption{slack.MsgOptionText(llmErrorUserMessage(err), false)}
@@ -566,7 +587,10 @@ func (b *Bot) postLLMReplyWithResult(ctx context.Context, channel, userText, mes
 	if reply == "" {
 		reply = "…"
 	}
+	startRepair := time.Now()
 	reply = b.repairOutboundReply(ctx, persona, userPayload, reply)
+	log.Printf("repair_call: path=channel employee=%s ms=%d",
+		strings.TrimSpace(b.cfg.EmployeeID), time.Since(startRepair).Milliseconds())
 	reply = normalizeSlackReply(reply, b.cfg, b.botUserID)
 	if b.cfg.MultiagentConfigured() {
 		handoff, _ := shouldHandoff(
@@ -578,7 +602,10 @@ func (b *Bot) postLLMReplyWithResult(ctx context.Context, channel, userText, mes
 		reply = normalizeSlackReply(reply, b.cfg, b.botUserID)
 	}
 	opts := []slack.MsgOption{slack.MsgOptionText(reply, false)}
+	startPost := time.Now()
 	_, _, err = b.api.PostMessageContext(ctx, channel, opts...)
+	log.Printf("slack_post: path=channel employee=%s ms=%d err=%t",
+		strings.TrimSpace(b.cfg.EmployeeID), time.Since(startPost).Milliseconds(), err != nil)
 	if err != nil {
 		log.Printf("slack post message: %v", err)
 		return false
@@ -592,6 +619,48 @@ func (b *Bot) postLLMReplyWithResult(ctx context.Context, channel, userText, mes
 func (b *Bot) useAlexHints() bool {
 	id := strings.ToLower(strings.TrimSpace(b.cfg.EmployeeID))
 	return id == "" || id == "alex"
+}
+
+func (b *Bot) withLLMTimeout(ctx context.Context) (context.Context, context.CancelFunc) {
+	if b == nil || b.cfg == nil || b.cfg.LLMReplyTimeoutSec <= 0 {
+		return context.WithTimeout(ctx, 35*time.Second)
+	}
+	return context.WithTimeout(ctx, time.Duration(b.cfg.LLMReplyTimeoutSec)*time.Second)
+}
+
+func (b *Bot) beginBroadcast(channel string) {
+	b.routeMu.Lock()
+	defer b.routeMu.Unlock()
+	channel = strings.TrimSpace(channel)
+	if channel == "" {
+		return
+	}
+	b.activeBroadcastByChannel[channel]++
+}
+
+func (b *Bot) endBroadcast(channel string) {
+	b.routeMu.Lock()
+	defer b.routeMu.Unlock()
+	channel = strings.TrimSpace(channel)
+	if channel == "" {
+		return
+	}
+	n := b.activeBroadcastByChannel[channel]
+	if n <= 1 {
+		delete(b.activeBroadcastByChannel, channel)
+		return
+	}
+	b.activeBroadcastByChannel[channel] = n - 1
+}
+
+func (b *Bot) isBroadcastActive(channel string) bool {
+	b.routeMu.Lock()
+	defer b.routeMu.Unlock()
+	channel = strings.TrimSpace(channel)
+	if channel == "" {
+		return false
+	}
+	return b.activeBroadcastByChannel[channel] > 0
 }
 
 // channelHistoryContextBlock loads recent messages on the channel timeline before the current

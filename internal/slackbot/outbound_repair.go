@@ -89,7 +89,9 @@ func (b *Bot) repairOutboundReply(ctx context.Context, persona, userPayload, dra
 	prompt := "Original user payload:\n" + strings.TrimSpace(userPayload) +
 		"\n\nDraft reply flagged by quality gate (" + reason + "):\n" + strings.TrimSpace(draft) +
 		"\n\nRewrite it as a clean, complete Slack reply."
-	fixed, err := b.llm.Reply(ctx, persona, slackReplySuffix+"\n\n"+outboundRepairSuffix, prompt)
+	repairCtx, cancelRepair := b.withLLMTimeout(ctx)
+	fixed, err := b.llm.Reply(repairCtx, persona, slackReplySuffix+"\n\n"+outboundRepairSuffix, prompt)
+	cancelRepair()
 	if err != nil {
 		log.Printf("outbound repair: rewrite failed: %v", err)
 		return fallbackCompleteReply(draft)

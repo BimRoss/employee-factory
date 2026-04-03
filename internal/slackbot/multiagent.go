@@ -569,7 +569,12 @@ func (b *Bot) postMultiagentReply(ctx context.Context, channel, userPayload stri
 		}
 	}
 
-	reply, err := b.llm.Reply(ctx, persona, suffix, userPayload)
+	llmCtx, cancelLLM := b.withLLMTimeout(ctx)
+	startLLM := time.Now()
+	reply, err := b.llm.Reply(llmCtx, persona, suffix, userPayload)
+	cancelLLM()
+	log.Printf("llm_call: path=multiagent employee=%s ms=%d err=%t payload_runes=%d",
+		strings.TrimSpace(b.cfg.EmployeeID), time.Since(startLLM).Milliseconds(), err != nil, utf8.RuneCountInString(userPayload))
 	if err != nil {
 		log.Printf("llm reply error (employee=%s): %v", strings.TrimSpace(b.cfg.EmployeeID), err)
 		opts := []slack.MsgOption{slack.MsgOptionText(llmErrorUserMessage(err), false)}
@@ -586,12 +591,18 @@ func (b *Bot) postMultiagentReply(ctx context.Context, channel, userPayload stri
 	if reply == "" {
 		reply = "…"
 	}
+	startRepair := time.Now()
 	reply = b.repairOutboundReply(ctx, persona, userPayload, reply)
+	log.Printf("repair_call: path=multiagent employee=%s ms=%d",
+		strings.TrimSpace(b.cfg.EmployeeID), time.Since(startRepair).Milliseconds())
 	reply = normalizeSlackReply(reply, b.cfg, b.botUserID)
 	reply = enforceMultiagentMentionPolicy(reply, b.cfg, b.botUserID, handoff)
 	reply = normalizeSlackReply(reply, b.cfg, b.botUserID)
 	opts := []slack.MsgOption{slack.MsgOptionText(reply, false)}
+	startPost := time.Now()
 	_, _, err = b.api.PostMessageContext(ctx, channel, opts...)
+	log.Printf("slack_post: path=multiagent employee=%s ms=%d err=%t",
+		strings.TrimSpace(b.cfg.EmployeeID), time.Since(startPost).Milliseconds(), err != nil)
 	if err != nil {
 		log.Printf("slack post message: %v", err)
 		return
