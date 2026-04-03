@@ -395,13 +395,15 @@ func (b *Bot) runMultiagentSession(ctx context.Context, channel, rawText string,
 
 	poll := time.Duration(b.cfg.MultiagentPollInterval) * time.Millisecond
 	deadline := time.Duration(b.cfg.MultiagentWaitTimeoutSec) * time.Second
+	softDeadline := time.Duration(b.cfg.MultiagentSlotSoftTimeoutSec) * time.Second
+	allowDegraded := b.cfg.MultiagentAllowDegradedStart
 
 	for k, uid := range slots {
 		if uid != b.botUserID {
 			continue
 		}
 		waitCtx, cancel := context.WithTimeout(ctx, deadline)
-		msgs, err := b.waitUntilSlot(waitCtx, channel, anchorTS, slots, k, poll)
+		waitResult, err := b.waitUntilSlot(waitCtx, channel, anchorTS, slots, k, poll, softDeadline, allowDegraded)
 		cancel()
 		if err != nil {
 			if strings.Contains(err.Error(), "missing_prior_slot") {
@@ -410,6 +412,22 @@ func (b *Bot) runMultiagentSession(ctx context.Context, channel, rawText string,
 				log.Printf("multiagent: slot %d wait failed (employee=%s): %v", k, b.cfg.EmployeeID, err)
 			}
 			return
+		}
+		msgs := waitResult.Messages
+		log.Printf("multiagent: slot wait employee=%s anchor=%s slot=%d wait_mode=%s wait_ms=%d polls=%d observed_prior=%d missing_expected_agent=%s degraded=%t reason=%s",
+			b.cfg.EmployeeID,
+			anchorTS,
+			k,
+			waitResult.Mode,
+			waitResult.Wait.Milliseconds(),
+			waitResult.Polls,
+			waitResult.ObservedPrior,
+			waitResult.ExpectedMissingAgent,
+			waitResult.Mode == multiagentWaitModeDegraded,
+			waitResult.Reason,
+		)
+		if waitResult.Mode == multiagentWaitModeDegraded && waitResult.ObservedPrior > k {
+			log.Printf("multiagent: late_slot_post employee=%s anchor=%s slot=%d observed_prior=%d", b.cfg.EmployeeID, anchorTS, k, waitResult.ObservedPrior)
 		}
 
 		prior := formatPriorSquadTurns(
@@ -444,7 +462,61 @@ func (b *Bot) runMultiagentSession(ctx context.Context, channel, rawText string,
 	}
 }
 
-func (b *Bot) waitUntilSlot(ctx context.Context, channelID, parentTS string, slots []string, slotIndex int, poll time.Duration) ([]slack.Message, error) {
+const (
+	multiagentWaitModeExact    = "exact_slot_ready"
+	multiagentWaitModeDegraded = "degraded_start"
+)
+
+type multiagentSlotWaitResult struct {
+	Messages             []slack.Message
+	Mode                 string
+	Wait                 time.Duration
+	Polls                int
+	ObservedPrior        int
+	ExpectedMissingAgent string
+	Reason               string
+}
+
+func evaluateMultiagentSlotState(
+	k int,
+	msgs []slack.Message,
+	slots []string,
+	elapsed time.Duration,
+	softDeadline time.Duration,
+	allowDegraded bool,
+) (mode string, reason string, ok bool) {
+	if len(msgs) == k && prefixMatchesSquadSlots(msgs, slots, k) {
+		return multiagentWaitModeExact, "exact_prefix_ready", true
+	}
+	if allowDegraded && softDeadline > 0 && elapsed >= softDeadline {
+		return multiagentWaitModeDegraded, "soft_timeout", true
+	}
+	return "", "", false
+}
+
+func expectedMissingAgentForSlot(slots []string, slotIndex int, observedPrior int) string {
+	if slotIndex <= 0 || len(slots) == 0 {
+		return ""
+	}
+	if observedPrior >= 0 && observedPrior < len(slots) {
+		return slots[observedPrior]
+	}
+	prev := slotIndex - 1
+	if prev >= 0 && prev < len(slots) {
+		return slots[prev]
+	}
+	return ""
+}
+
+func (b *Bot) waitUntilSlot(
+	ctx context.Context,
+	channelID, parentTS string,
+	slots []string,
+	slotIndex int,
+	poll time.Duration,
+	softDeadline time.Duration,
+	allowDegraded bool,
+) (*multiagentSlotWaitResult, error) {
 	k := slotIndex
 	start := time.Now()
 	attempts := 0
@@ -462,10 +534,17 @@ func (b *Bot) waitUntilSlot(ctx context.Context, channelID, parentTS string, slo
 		// Slot k is this bot's turn after exactly k prior squad messages in order (0-indexed).
 		// We poll conversations.history until that prefix appears—so the previous bot has
 		// finished PostMessage and Slack returns the full message before we call the LLM.
-		if len(msgs) == k && prefixMatchesSquadSlots(msgs, slots, k) {
-			log.Printf("multiagent: slot ready employee=%s slot=%d wait=%v polls=%d prior_squad_msgs=%d",
-				b.cfg.EmployeeID, k, time.Since(start), attempts, len(msgs))
-			return msgs, nil
+		elapsed := time.Since(start)
+		if mode, reason, ok := evaluateMultiagentSlotState(k, msgs, slots, elapsed, softDeadline, allowDegraded); ok {
+			return &multiagentSlotWaitResult{
+				Messages:             msgs,
+				Mode:                 mode,
+				Wait:                 elapsed,
+				Polls:                attempts,
+				ObservedPrior:        len(msgs),
+				ExpectedMissingAgent: expectedMissingAgentForSlot(slots, k, len(msgs)),
+				Reason:               reason,
+			}, nil
 		}
 		if len(msgs) == lastSeen {
 			noProgressPolls++
@@ -483,6 +562,9 @@ func (b *Bot) waitUntilSlot(ctx context.Context, channelID, parentTS string, slo
 			if k > 0 && k-1 < len(slots) {
 				expected = slots[k-1]
 			}
+			if allowDegraded {
+				continue
+			}
 			return nil, fmt.Errorf("missing_prior_slot anchor=%s slot=%d expected_agent=%s observed_prior=%d reason=prefix_mismatch polls=%d",
 				parentTS, k, expected, len(msgs), attempts)
 		}
@@ -491,6 +573,9 @@ func (b *Bot) waitUntilSlot(ctx context.Context, channelID, parentTS string, slo
 			next := len(msgs)
 			if next >= 0 && next < len(slots) {
 				expected = slots[next]
+			}
+			if allowDegraded {
+				continue
 			}
 			return nil, fmt.Errorf("missing_prior_slot anchor=%s slot=%d expected_agent=%s observed_prior=%d reason=no_progress polls=%d",
 				parentTS, k, expected, len(msgs), attempts)

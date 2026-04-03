@@ -33,6 +33,8 @@ type Config struct {
 	LLMRetryBackoffMS int
 	// LLMFallbackModel is a smaller or warmer OpenAI-compatible model id (same LLM_BASE_URL and LLM_API_KEY). Empty disables fallback.
 	LLMFallbackModel string
+	// LLMFallbackTimeoutSec bounds fallback completion time when fallback is attempted.
+	LLMFallbackTimeoutSec int
 	// LLMReplyTimeoutSec bounds each completion call so one stalled provider request cannot block event handling forever.
 	LLMReplyTimeoutSec int
 
@@ -60,6 +62,10 @@ type Config struct {
 	MultiagentOrder          []string          // employee keys, e.g. ross, tim, alex, garth
 	MultiagentPollInterval   int               // milliseconds between Slack polls while waiting
 	MultiagentWaitTimeoutSec int               // max wait for a predecessor to post
+	// MultiagentSlotSoftTimeoutSec bounds how long a bot waits for its predecessor before degraded start.
+	MultiagentSlotSoftTimeoutSec int
+	// MultiagentAllowDegradedStart allows downstream slots to continue when prior slot is missing after soft timeout.
+	MultiagentAllowDegradedStart bool
 	// MultiagentHandoffProbability: per scheduled multiagent reply, chance (0–1) to nudge @mention handoff vs self-contained.
 	MultiagentHandoffProbability float64
 	// MultiagentBroadcastHandoffProbability: same as above for @everyone / <!channel> multiagent runs only.
@@ -147,6 +153,7 @@ func Load() (*Config, error) {
 		LLMMaxRetries:             parseIntEnvMinAllowZero("LLM_MAX_RETRIES", 2, 0),
 		LLMRetryBackoffMS:         parseIntEnvMin("LLM_RETRY_BACKOFF_MS", 400, 50),
 		LLMFallbackModel:          strings.TrimSpace(os.Getenv("LLM_FALLBACK_MODEL")),
+		LLMFallbackTimeoutSec:     parseIntEnvMin("LLM_FALLBACK_TIMEOUT_SEC", 8, 1),
 		LLMReplyTimeoutSec:        parseIntEnvMin("LLM_REPLY_TIMEOUT_SEC", 35, 5),
 		LLMThreadMaxMessages:      parseIntEnvMin("LLM_THREAD_MAX_MESSAGES", 25, 1),
 		LLMThreadMaxRunes:         parseIntEnvMin("LLM_THREAD_MAX_RUNES", 16000, 256),
@@ -292,6 +299,8 @@ func parseMultiagentEnv(cfg *Config) error {
 	cfg.MultiagentOrder = order
 	cfg.MultiagentPollInterval = parseIntEnvMin("MULTIAGENT_POLL_INTERVAL_MS", 800, 50)
 	cfg.MultiagentWaitTimeoutSec = parseIntEnvMin("MULTIAGENT_WAIT_TIMEOUT_SEC", 300, 5)
+	cfg.MultiagentSlotSoftTimeoutSec = parseIntEnvMin("MULTIAGENT_SLOT_SOFT_TIMEOUT_SEC", 12, 1)
+	cfg.MultiagentAllowDegradedStart = parseBoolEnv("MULTIAGENT_ALLOW_DEGRADED_START", true)
 	cfg.MultiagentEnabled = parseBoolEnv("MULTIAGENT_ENABLED", true)
 	cfg.MultiagentHandoffProbability = parseFloat64EnvClamp("MULTIAGENT_HANDOFF_PROBABILITY", 0.5, 0, 1)
 	cfg.MultiagentBroadcastHandoffProbability = cfg.MultiagentHandoffProbability

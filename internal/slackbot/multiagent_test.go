@@ -5,6 +5,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/bimross/employee-factory/internal/config"
 	"github.com/slack-go/slack"
@@ -308,5 +309,64 @@ func TestRecencyWeight_defaultDecay(t *testing.T) {
 	}
 	if got := recencyWeight(9, 0.5, 3); math.Abs(got-0.25) > 0.0001 {
 		t.Fatalf("weights should cap at window floor, got %.4f", got)
+	}
+}
+
+func TestEvaluateMultiagentSlotState_exactReady(t *testing.T) {
+	slots := []string{"U1", "U2", "U3"}
+	msgs := []slack.Message{
+		{Msg: slack.Msg{User: "U1"}},
+		{Msg: slack.Msg{User: "U2"}},
+	}
+	mode, reason, ok := evaluateMultiagentSlotState(2, msgs, slots, 1500*time.Millisecond, 10*time.Second, true)
+	if !ok {
+		t.Fatal("expected slot to be ready")
+	}
+	if mode != multiagentWaitModeExact {
+		t.Fatalf("mode=%q want %q", mode, multiagentWaitModeExact)
+	}
+	if reason != "exact_prefix_ready" {
+		t.Fatalf("reason=%q", reason)
+	}
+}
+
+func TestEvaluateMultiagentSlotState_softTimeoutDegrades(t *testing.T) {
+	slots := []string{"U1", "U2", "U3", "U4"}
+	msgs := []slack.Message{
+		{Msg: slack.Msg{User: "U1"}},
+	}
+	mode, reason, ok := evaluateMultiagentSlotState(2, msgs, slots, 12*time.Second, 10*time.Second, true)
+	if !ok {
+		t.Fatal("expected degraded start after soft timeout")
+	}
+	if mode != multiagentWaitModeDegraded {
+		t.Fatalf("mode=%q want %q", mode, multiagentWaitModeDegraded)
+	}
+	if reason != "soft_timeout" {
+		t.Fatalf("reason=%q", reason)
+	}
+}
+
+func TestEvaluateMultiagentSlotState_noDegradeBeforeSoftTimeout(t *testing.T) {
+	slots := []string{"U1", "U2", "U3"}
+	msgs := []slack.Message{
+		{Msg: slack.Msg{User: "U1"}},
+	}
+	mode, reason, ok := evaluateMultiagentSlotState(2, msgs, slots, 5*time.Second, 10*time.Second, true)
+	if ok {
+		t.Fatalf("unexpected readiness mode=%q reason=%q", mode, reason)
+	}
+}
+
+func TestExpectedMissingAgentForSlot(t *testing.T) {
+	slots := []string{"U1", "U2", "U3", "U4"}
+	if got := expectedMissingAgentForSlot(slots, 3, 2); got != "U3" {
+		t.Fatalf("got %q want U3", got)
+	}
+	if got := expectedMissingAgentForSlot(slots, 3, -1); got != "U3" {
+		t.Fatalf("got %q want U3", got)
+	}
+	if got := expectedMissingAgentForSlot(slots, 0, 0); got != "" {
+		t.Fatalf("slot 0 should not report missing agent, got %q", got)
 	}
 }

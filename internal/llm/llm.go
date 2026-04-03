@@ -17,6 +17,7 @@ type EmployeeLLM struct {
 	fallback       cogito.LLM
 	maxRetries     int
 	retryBackoffMS int
+	fallbackTO     time.Duration
 	maxTokens      int
 	systemMaxRunes int
 	temperature    float32
@@ -29,6 +30,7 @@ func New(cfg *config.Config) *EmployeeLLM {
 		primary:        cogito.NewOpenAILLM(cfg.LLMModel, cfg.LLMAPIKey, cfg.LLMBaseURL),
 		maxRetries:     cfg.LLMMaxRetries,
 		retryBackoffMS: cfg.LLMRetryBackoffMS,
+		fallbackTO:     time.Duration(cfg.LLMFallbackTimeoutSec) * time.Second,
 		maxTokens:      cfg.LLMMaxTokens,
 		systemMaxRunes: cfg.LLMSystemMaxRunes,
 		temperature:    cfg.LLMTemperature,
@@ -99,9 +101,20 @@ func (e *EmployeeLLM) Reply(ctx context.Context, personaBody, slackSystemSuffix,
 		}
 	}
 
-	if e.fallback != nil && lastErr != nil && IsTransientLLMError(lastErr) {
-		log.Printf("llm: attempting fallback model after transient primary failure: %v", lastErr)
-		resp, err := e.fallback.CreateChatCompletion(ctx, req)
+	if e.fallback != nil && lastErr != nil && IsFallbackEligibleLLMError(lastErr) {
+		log.Printf("llm: attempting fallback model after primary failure: %v", lastErr)
+		timeout := e.fallbackTO
+		if timeout <= 0 {
+			timeout = 8 * time.Second
+		}
+		fallbackBase := ctx
+		// Primary timeout can cancel the parent ctx; use a short detached budget for fallback.
+		if IsProviderTimeoutLLMError(lastErr) {
+			fallbackBase = context.Background()
+		}
+		fallbackCtx, cancelFallback := context.WithTimeout(fallbackBase, timeout)
+		resp, err := e.fallback.CreateChatCompletion(fallbackCtx, req)
+		cancelFallback()
 		if err == nil {
 			log.Printf("llm: fallback model completion succeeded")
 			return chatCompletionText(resp), nil

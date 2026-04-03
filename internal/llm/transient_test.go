@@ -1,6 +1,7 @@
 package llm
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"testing"
@@ -32,6 +33,43 @@ func TestIsTransientLLMError(t *testing.T) {
 				t.Fatalf("IsTransientLLMError(%v) = %v, want %v", tc.err, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestIsProviderTimeoutLLMError(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"nil", nil, false},
+		{"deadline", context.DeadlineExceeded, true},
+		{"wrapped deadline", fmt.Errorf("request failed: %w", context.DeadlineExceeded), true},
+		{"io timeout text", errors.New("dial tcp: i/o timeout"), true},
+		{"client timeout text", errors.New("net/http: request canceled (Client.Timeout exceeded while awaiting headers)"), true},
+		{"non-timeout", errors.New("status code: 400"), false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := IsProviderTimeoutLLMError(tc.err); got != tc.want {
+				t.Fatalf("IsProviderTimeoutLLMError(%v) = %v, want %v", tc.err, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestIsFallbackEligibleLLMError(t *testing.T) {
+	t.Parallel()
+	if !IsFallbackEligibleLLMError(context.DeadlineExceeded) {
+		t.Fatal("expected timeout errors to be fallback-eligible")
+	}
+	if !IsFallbackEligibleLLMError(&openai.RequestError{HTTPStatusCode: 503, Err: errors.New("x")}) {
+		t.Fatal("expected transient 503 errors to be fallback-eligible")
+	}
+	if IsFallbackEligibleLLMError(errors.New("status code: 400")) {
+		t.Fatal("did not expect 400 errors to be fallback-eligible")
 	}
 }
 
