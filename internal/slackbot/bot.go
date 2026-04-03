@@ -177,6 +177,16 @@ func (b *Bot) onMessage(ctx context.Context, ev *slackevents.MessageEvent) {
 	if strings.HasPrefix(channel, "D") || ev.ChannelType == "im" || ev.ChannelType == "mpim" {
 		return
 	}
+	if b.applyAvailabilityRouter(ctx, availabilityRouteEvent{
+		Path:      "message",
+		Channel:   channel,
+		MessageTS: ev.TimeStamp,
+		ThreadTS:  ev.ThreadTimeStamp,
+		RawText:   rawText,
+		Phase:     routerPhaseIngress,
+	}) {
+		return
+	}
 	if ts := strings.TrimSpace(ev.ThreadTimeStamp); ts != "" {
 		if b.cfg.ThreadsEnabled() {
 			log.Printf("slack_route: path=thread employee=%s channel=%s thread_ts=%s", strings.TrimSpace(b.cfg.EmployeeID), channel, ts)
@@ -245,6 +255,16 @@ func (b *Bot) onAppMention(ctx context.Context, ev *slackevents.AppMentionEvent)
 		return
 	}
 	if strings.HasPrefix(channel, "D") {
+		return
+	}
+	if b.applyAvailabilityRouter(ctx, availabilityRouteEvent{
+		Path:      "app_mention",
+		Channel:   channel,
+		MessageTS: ev.TimeStamp,
+		ThreadTS:  ev.ThreadTimeStamp,
+		RawText:   rawText,
+		Phase:     routerPhaseIngress,
+	}) {
 		return
 	}
 	if ts := strings.TrimSpace(ev.ThreadTimeStamp); ts != "" {
@@ -563,6 +583,16 @@ func (b *Bot) postLLMReply(ctx context.Context, channel, userText, messageTS str
 }
 
 func (b *Bot) postLLMReplyWithResult(ctx context.Context, channel, userText, messageTS string) bool {
+	if b.applyAvailabilityRouter(ctx, availabilityRouteEvent{
+		Path:      "post_llm_channel",
+		Channel:   channel,
+		MessageTS: messageTS,
+		RawText:   userText,
+		Phase:     routerPhasePreLLM,
+	}) {
+		return true
+	}
+
 	b.mu.Lock()
 	defer b.mu.Unlock()
 

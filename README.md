@@ -40,6 +40,15 @@ When a plain (no-bot-mention, no channel-wide summon) message is posted in `#gen
 - Trigger chance is deterministic per message via `MULTIAGENT_GENERAL_AUTO_REPLY_PROBABILITY` (default `0.4`).
 - Winner selection is deterministic across pods from message timestamp + `MULTIAGENT_ORDER` + optional `MULTIAGENT_SHUFFLE_SECRET`, so exactly one bot responds.
 
+## Availability/signoff router
+
+`employee-factory` supports a deterministic ingress router for operator availability cues.
+
+- `ROUTER_AVAILABILITY_ENABLED=true` enforces async-safe behavior for cues like `step away`, `afk`, `back later`, `sign off`, and `go to bed`.
+- `ROUTER_LOG_ONLY=true` records `router_decision` traces without suppressing normal reply paths.
+- Router policy is checked at Slack ingress and again pre-LLM in channel/thread/multi-agent paths so edge event shapes do not bypass safety.
+- Enforced behavior posts one concise acknowledgment and suppresses additional asks/mentions for that message path.
+
 ### Turn quality policy (runtime-enforced prompt block)
 
 During multi-agent sessions, each slot now receives an explicit policy block before LLM generation:

@@ -462,7 +462,7 @@ func (b *Bot) runMultiagentSession(ctx context.Context, channel, rawText string,
 			// Single closer: keep the final message self-contained to reduce ping-pong loops.
 			slotHandoffProbability = 0
 		}
-		b.postMultiagentReply(ctx, channel, userPayload, slotHandoffProbability)
+		b.postMultiagentReply(ctx, channel, userQuestion, userPayload, anchorTS, slotHandoffProbability)
 	}
 }
 
@@ -627,7 +627,17 @@ func (b *Bot) squadMessagesInChannelAfter(ctx context.Context, channelID, parent
 	return out, nil
 }
 
-func (b *Bot) postMultiagentReply(ctx context.Context, channel, userPayload string, handoffProbability float64) {
+func (b *Bot) postMultiagentReply(ctx context.Context, channel, sourceText, userPayload, messageTS string, handoffProbability float64) {
+	if b.applyAvailabilityRouter(ctx, availabilityRouteEvent{
+		Path:      "post_llm_multiagent",
+		Channel:   channel,
+		MessageTS: messageTS,
+		RawText:   sourceText,
+		Phase:     routerPhasePreLLM,
+	}) {
+		return
+	}
+
 	b.mu.Lock()
 	defer b.mu.Unlock()
 

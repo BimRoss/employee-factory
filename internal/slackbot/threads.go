@@ -298,11 +298,22 @@ func (b *Bot) handleThreadMessage(ctx context.Context, channel, userID, rawText,
 	log.Printf("context_build: path=%s employee=%s channel=%s payload_runes=%d",
 		logPath, strings.TrimSpace(cfg.EmployeeID), strings.TrimSpace(channel), utf8.RuneCountInString(userText))
 
-	b.postLLMReplyInThread(ctx, channel, userText, messageTS, threadTS)
+	b.postLLMReplyInThread(ctx, channel, rawText, userText, messageTS, threadTS)
 	return true
 }
 
-func (b *Bot) postLLMReplyInThread(ctx context.Context, channel, userText, messageTS, threadTS string) {
+func (b *Bot) postLLMReplyInThread(ctx context.Context, channel, sourceText, userText, messageTS, threadTS string) {
+	if b.applyAvailabilityRouter(ctx, availabilityRouteEvent{
+		Path:      "post_llm_thread",
+		Channel:   channel,
+		MessageTS: messageTS,
+		ThreadTS:  threadTS,
+		RawText:   sourceText,
+		Phase:     routerPhasePreLLM,
+	}) {
+		return
+	}
+
 	b.mu.Lock()
 	defer b.mu.Unlock()
 

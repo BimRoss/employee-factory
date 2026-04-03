@@ -114,6 +114,11 @@ type Config struct {
 	// CompanyChannelsEnforce drops events for channels that are not present in CompanyChannels.
 	// Keep false during migration so existing single-channel behavior remains unchanged.
 	CompanyChannelsEnforce bool
+
+	// RouterAvailabilityEnabled enforces availability/signoff ack-only behavior for Slack ingress + pre-LLM guards.
+	RouterAvailabilityEnabled bool
+	// RouterLogOnly keeps router classification + decision traces enabled but does not enforce suppression.
+	RouterLogOnly bool
 }
 
 // Load reads environment variables. Canonical keys (LLM_*, SLACK_*) take precedence;
@@ -185,6 +190,8 @@ func Load() (*Config, error) {
 		LLMChannelThreadRepliesMax:            parseIntEnvMin("LLM_CHANNEL_THREAD_REPLIES_MAX", 15, 1),
 		LLMContextWeightDecay:                 parseFloat64EnvClamp("LLM_CONTEXT_WEIGHT_DECAY", 0.5, 0.1, 1.0),
 		LLMContextWeightWindow:                parseIntEnvMin("LLM_CONTEXT_WEIGHT_WINDOW", 3, 1),
+		RouterAvailabilityEnabled:             parseBoolEnv("ROUTER_AVAILABILITY_ENABLED", false),
+		RouterLogOnly:                         parseBoolEnv("ROUTER_LOG_ONLY", false),
 	}
 
 	if err := parseMultiagentEnv(cfg); err != nil {
@@ -230,6 +237,14 @@ func (c *Config) MultiagentConfigured() bool {
 		return false
 	}
 	return len(c.MultiagentBotUserIDs) > 0 && len(c.MultiagentOrder) > 0
+}
+
+// RouterAvailabilityActive returns true when availability/sentiment routing should classify traffic.
+func (c *Config) RouterAvailabilityActive() bool {
+	if c == nil {
+		return false
+	}
+	return c.RouterAvailabilityEnabled || c.RouterLogOnly
 }
 
 func parseMultiagentEnv(cfg *Config) error {
