@@ -346,6 +346,7 @@ func buildMultiagentTurnPolicy(selfKey string, slotIndex int, totalSlots int) st
 	} else {
 		b.WriteString("- You are not the closer: do not provide the final answer or full recap.\n")
 		b.WriteString("- End with one sharp question or handoff cue only if needed.\n")
+		b.WriteString("- If you hand off, choose the next agent by unresolved lane; do not default to @ross unless implementation/code/infra execution is the blocker.\n")
 	}
 	return b.String()
 }
@@ -648,7 +649,7 @@ func (b *Bot) postMultiagentReply(ctx context.Context, channel, userPayload stri
 			b.cfg.MultiagentHandoffMaxProbability,
 		)
 		if handoff {
-			suffix += "\n\nHand-off cue for this turn: include one @mention of another squad member—not yourself (@ross/@tim/@alex/@garth) with a concrete question or next step."
+			suffix += "\n\nHand-off cue for this turn: include one @mention of another squad member—not yourself (@ross/@tim/@alex/@garth) with a concrete question or next step. Choose based on unresolved lane; do not default to @ross unless implementation/code/infra execution is the blocker."
 		} else {
 			suffix += "\n\nHand-off cue for this turn: keep this reply self-contained; do not @mention squad members unless strictly necessary."
 		}

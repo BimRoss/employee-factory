@@ -314,12 +314,14 @@ func parseMultiagentEnv(cfg *Config) error {
 			}
 			cfg.MultiagentBroadcastHandoffProbability = f
 		}
+	} else {
+		cfg.MultiagentBroadcastHandoffProbability = 0.35
 	}
 	cfg.MultiagentBroadcastBranchingEnabled = parseBoolEnv("MULTIAGENT_BROADCAST_BRANCHING_ENABLED", true)
 	cfg.MultiagentBroadcastBranchingProbability = parseFloat64EnvClamp("MULTIAGENT_BROADCAST_BRANCHING_PROBABILITY", 0.5, 0, 1)
 	cfg.MultiagentBroadcastBranchingHandoffProbability = parseFloat64EnvClamp(
 		"MULTIAGENT_BROADCAST_BRANCHING_HANDOFF_PROBABILITY",
-		1.0,
+		0.6,
 		0,
 		1,
 	)

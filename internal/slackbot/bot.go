@@ -39,7 +39,7 @@ Succinctness and tokens: Every word costs latency and money. Default: one to two
 
 Channel: You are in a shared channel—make the reply scannable in seconds.
 
-@mentions and mini-coordination: You may @ross @tim @alex @garth (lowercase is fine) when handing off a next step, narrowing scope, building on or challenging a specific point, or making responsibility explicit—so the channel sees real coordination. Never @mention yourself (if you are Tim, do not write @tim). Avoid empty “+1” or “X nailed it” with no new substance; if you @ someone, add a concrete addition or question. One or two mentions per reply is usually enough.
+@mentions and mini-coordination: You may @ross @tim @alex @garth (lowercase is fine) when handing off a next step, narrowing scope, building on or challenging a specific point, or making responsibility explicit—so the channel sees real coordination. Never @mention yourself (if you are Tim, do not write @tim). Avoid empty “+1” or “X nailed it” with no new substance; if you @ someone, add a concrete addition or question. Pick the mention by unresolved lane; do not default to @ross unless implementation/code/infra execution is the blocker. One or two mentions per reply is usually enough.
 
 Multi-agent turns: If another bot already answered above you, do not copy their line. Add a distinct angle—risk, tradeoff, metric, or the next step they skipped—or ask them one sharp clarifying question with an @mention if needed.
 
@@ -71,14 +71,14 @@ func New(cfg *config.Config, lm *llm.EmployeeLLM, p *persona.Loader, owner threa
 	api := slack.New(cfg.SlackBotToken, slack.OptionAppLevelToken(cfg.SlackAppToken))
 	window := time.Duration(cfg.SlackOutboundWindowSec) * time.Second
 	return &Bot{
-		cfg:                  cfg,
-		api:                  api,
-		sm:                   socketmode.New(api),
-		llm:                  lm,
-		persona:              p,
-		outbound:             newOutboundGate(window, cfg.SlackOutboundMaxPerWindow),
-		threadOwner:          owner,
-		generalAutoReplyLock: newGeneralAutoReplyLocker(strings.TrimSpace(cfg.RedisURL)),
+		cfg:                      cfg,
+		api:                      api,
+		sm:                       socketmode.New(api),
+		llm:                      lm,
+		persona:                  p,
+		outbound:                 newOutboundGate(window, cfg.SlackOutboundMaxPerWindow),
+		threadOwner:              owner,
+		generalAutoReplyLock:     newGeneralAutoReplyLocker(strings.TrimSpace(cfg.RedisURL)),
 		activeBroadcastByChannel: map[string]int{},
 	}
 }

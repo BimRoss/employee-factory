@@ -17,8 +17,8 @@ For channel-wide summons (`@everyone` or `@channel`, Slack tokens `<!everyone>` 
 - **Coordination** is **not** Redis: each bot polls `conversations.history` until prior squad messages match the expected slot prefix, then calls the LLM and posts (same as before).
 - **`MULTIAGENT_BROADCAST_ROUNDS`** (default `1`) is how many full passes over that shuffled order to run per trigger (`1` ⇒ each agent replies once).
 - Per-reply handoff chance is sampled inside `MULTIAGENT_HANDOFF_MIN_PROBABILITY..MULTIAGENT_HANDOFF_MAX_PROBABILITY` (defaults `0.25..0.75`) so cross-agent mentions feel organic.
-- **`MULTIAGENT_BROADCAST_HANDOFF_PROBABILITY`** (default `0.5`) still controls broadcast intensity, but each reply uses bounded randomness before deciding the final `@mention`.
-- **Deterministic branch mode**: with `MULTIAGENT_BROADCAST_BRANCHING_ENABLED=true`, each `<!everyone>` trigger deterministically flips into branch mode using `MULTIAGENT_BROADCAST_BRANCHING_PROBABILITY` (default `0.5`). Branch mode uses `MULTIAGENT_BROADCAST_BRANCHING_HANDOFF_PROBABILITY` (default `1.0`) to produce richer cross-agent follow-ons while keeping ordering stable across pods.
+- **`MULTIAGENT_BROADCAST_HANDOFF_PROBABILITY`** (default `0.35`) controls broadcast mention intensity, but each reply uses bounded randomness before deciding the final `@mention`.
+- **Deterministic branch mode**: with `MULTIAGENT_BROADCAST_BRANCHING_ENABLED=true`, each `<!everyone>` trigger deterministically flips into branch mode using `MULTIAGENT_BROADCAST_BRANCHING_PROBABILITY` (default `0.5`). Branch mode uses `MULTIAGENT_BROADCAST_BRANCHING_HANDOFF_PROBABILITY` (default `0.6`) to keep cross-agent follow-ons balanced while preserving stable ordering across pods.
 
 ## Plain `#general` auto-reply (single random agent)
 

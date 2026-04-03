@@ -330,15 +330,30 @@ func enforceMultiagentMentionPolicy(s string, cfg *config.Config, selfSlackUserI
 		for _, m := range members {
 			valid[m.uid] = true
 		}
+		rossUID := ""
+		for _, m := range members {
+			if m.key == "ross" {
+				rossUID = m.uid
+				break
+			}
+		}
+		seen := make(map[string]bool)
+		var candidates []string
 		for _, m := range matches {
 			if len(m) < 2 {
 				continue
 			}
 			uid := strings.TrimSpace(m[1])
-			if valid[uid] {
-				keepUID = uid
-				break
+			if valid[uid] && !seen[uid] {
+				seen[uid] = true
+				candidates = append(candidates, uid)
 			}
+		}
+		if len(candidates) == 1 && rossUID != "" && candidates[0] == rossUID && len(members) > 1 {
+			// Reduce a model tendency to always hand off to Ross when there is no strong lane evidence.
+			keepUID = pickMentionUID(members, s)
+		} else if len(candidates) > 0 {
+			keepUID = pickMentionUIDFromCandidates(candidates, s)
 		}
 	}
 
@@ -384,6 +399,17 @@ func pickMentionUID(members []squadMember, seed string) string {
 	_, _ = h.Write([]byte(seed))
 	idx := int(h.Sum32() % uint32(len(members)))
 	return members[idx].uid
+}
+
+func pickMentionUIDFromCandidates(candidates []string, seed string) string {
+	if len(candidates) == 0 {
+		return ""
+	}
+	sort.Strings(candidates)
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(seed))
+	idx := int(h.Sum32() % uint32(len(candidates)))
+	return candidates[idx]
 }
 
 // stripOutgoingSelfMentions removes pings to this bot: plain @employee_id and Slack tokens <@U…> (optional |label).

@@ -1,6 +1,7 @@
 package slackbot
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -212,5 +213,37 @@ func TestEnforceMultiagentMentionPolicy_noHandoff(t *testing.T) {
 	}
 	if strings.Contains(strings.ToLower(out), "@ross") || strings.Contains(strings.ToLower(out), "@alex") || strings.Contains(strings.ToLower(out), "@garth") {
 		t.Fatalf("expected plain squad mentions removed, got %q", out)
+	}
+}
+
+func TestEnforceMultiagentMentionPolicy_requireHandoff_singleRossMentionBalanced(t *testing.T) {
+	cfg := &config.Config{
+		EmployeeID: "tim",
+		MultiagentBotUserIDs: map[string]string{
+			"ross":  "U0APX108QE7",
+			"tim":   "U0AQ10R2H8E",
+			"alex":  "U0APSMH05B5",
+			"garth": "UGARTH0001",
+		},
+	}
+	seen := make(map[string]bool)
+	for i := 0; i < 20; i++ {
+		in := fmt.Sprintf("Need a fast check from <@U0APX108QE7> (%d)", i)
+		out := enforceMultiagentMentionPolicy(in, cfg, "U0AQ10R2H8E", true)
+		matches := reSlackMention.FindAllStringSubmatch(out, -1)
+		if len(matches) != 1 {
+			t.Fatalf("expected exactly one mention, got %d: %q", len(matches), out)
+		}
+		uid := matches[0][1]
+		if uid == "U0AQ10R2H8E" {
+			t.Fatalf("should never mention self: %q", out)
+		}
+		seen[uid] = true
+	}
+	if len(seen) < 2 {
+		t.Fatalf("expected balanced distribution across mentions, got only %v", seen)
+	}
+	if !seen["U0APSMH05B5"] && !seen["UGARTH0001"] {
+		t.Fatalf("expected at least one non-Ross handoff when seed varies, got %v", seen)
 	}
 }
