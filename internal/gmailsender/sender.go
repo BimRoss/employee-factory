@@ -20,6 +20,7 @@ const gmailSendEndpoint = "https://gmail.googleapis.com/gmail/v1/users/me/messag
 type Sender struct {
 	client      *http.Client
 	senderEmail string
+	senderName  string
 }
 
 type SendInput struct {
@@ -46,6 +47,7 @@ func New(cfg *config.Config) (*Sender, error) {
 	return &Sender{
 		client:      client,
 		senderEmail: strings.TrimSpace(cfg.GoogleSenderEmail),
+		senderName:  resolveSenderName(cfg),
 	}, nil
 }
 
@@ -66,7 +68,7 @@ func (s *Sender) Send(ctx context.Context, in SendInput) error {
 		return fmt.Errorf("missing email body")
 	}
 
-	raw := buildRawMessage(s.senderEmail, to, subject, body)
+	raw := buildRawMessage(s.senderName, s.senderEmail, to, subject, body)
 	payload := map[string]string{"raw": raw}
 	b, err := json.Marshal(payload)
 	if err != nil {
@@ -89,8 +91,13 @@ func (s *Sender) Send(ctx context.Context, in SendInput) error {
 	return nil
 }
 
-func buildRawMessage(from, to, subject, body string) string {
-	msg := "From: " + strings.TrimSpace(from) + "\r\n" +
+func buildRawMessage(fromName, fromEmail, to, subject, body string) string {
+	from := strings.TrimSpace(fromEmail)
+	if n := strings.TrimSpace(fromName); n != "" {
+		quoted := strings.ReplaceAll(n, "\"", "\\\"")
+		from = fmt.Sprintf("\"%s\" <%s>", quoted, from)
+	}
+	msg := "From: " + from + "\r\n" +
 		"To: " + strings.TrimSpace(to) + "\r\n" +
 		"Subject: " + strings.TrimSpace(subject) + "\r\n" +
 		"MIME-Version: 1.0\r\n" +
@@ -98,4 +105,17 @@ func buildRawMessage(from, to, subject, body string) string {
 		"\r\n" +
 		strings.TrimSpace(body)
 	return base64.RawURLEncoding.EncodeToString([]byte(msg))
+}
+
+func resolveSenderName(cfg *config.Config) string {
+	if cfg == nil {
+		return ""
+	}
+	if n := strings.TrimSpace(cfg.GoogleSenderName); n != "" {
+		return n
+	}
+	if strings.EqualFold(strings.TrimSpace(cfg.EmployeeID), "joanne") {
+		return "Joanne"
+	}
+	return ""
 }

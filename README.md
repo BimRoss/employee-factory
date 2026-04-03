@@ -103,6 +103,7 @@ Joanne can now send Gmail on command from Slack when OAuth runtime config is pre
 - `GOOGLE_CLIENT_SECRET`
 - `GOOGLE_REFRESH_TOKEN`
 - `GOOGLE_SENDER_EMAIL`
+- `GOOGLE_SENDER_NAME` (optional)
 
 These are loaded from the `employee-factory-joanne-runtime` Secret (same secret flow as Slack and LLM keys).
 
@@ -112,6 +113,7 @@ These are loaded from the `employee-factory-joanne-runtime` Secret (same secret 
 2. Create OAuth client credentials for the Joanne mailbox flow.
 3. Grant scope `https://www.googleapis.com/auth/gmail.send`.
 4. Generate/store a refresh token for the Joanne account.
+5. Optional: set `GOOGLE_SENDER_NAME=Joanne` to force friendly display name in `From`.
 
 Do not use password-based auth for this path.
 

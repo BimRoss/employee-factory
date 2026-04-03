@@ -128,6 +128,7 @@ type Config struct {
 	GoogleClientSecret string
 	GoogleRefreshToken string
 	GoogleSenderEmail  string
+	GoogleSenderName   string
 }
 
 // Load reads environment variables. Canonical keys (LLM_*, SLACK_*) take precedence;
@@ -206,6 +207,7 @@ func Load() (*Config, error) {
 		GoogleClientSecret:                    strings.TrimSpace(os.Getenv("GOOGLE_CLIENT_SECRET")),
 		GoogleRefreshToken:                    strings.TrimSpace(os.Getenv("GOOGLE_REFRESH_TOKEN")),
 		GoogleSenderEmail:                     strings.TrimSpace(os.Getenv("GOOGLE_SENDER_EMAIL")),
+		GoogleSenderName:                      strings.TrimSpace(os.Getenv("GOOGLE_SENDER_NAME")),
 	}
 
 	if err := parseMultiagentEnv(cfg); err != nil {
