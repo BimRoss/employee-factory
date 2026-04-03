@@ -107,6 +107,8 @@ type Config struct {
 	// Runtime samples within this bounded range to make cross-agent pinging feel organic.
 	MultiagentHandoffMinProbability float64 // default 0.25
 	MultiagentHandoffMaxProbability float64 // default 0.75
+	// MultiagentChatterCap clamps all handoff-style cross-agent mention probabilities.
+	MultiagentChatterCap float64
 
 	// CompanyChannels is an optional channel->company runtime contract map loaded from COMPANY_CHANNELS_JSON.
 	// This is the first-pass scaffold for "one Slack channel = one company runtime".
@@ -357,6 +359,22 @@ func parseMultiagentEnv(cfg *Config) error {
 	}
 	cfg.MultiagentHandoffMinProbability = parseFloat64EnvClamp("MULTIAGENT_HANDOFF_MIN_PROBABILITY", 0.25, 0, 1)
 	cfg.MultiagentHandoffMaxProbability = parseFloat64EnvClamp("MULTIAGENT_HANDOFF_MAX_PROBABILITY", 0.75, 0, 1)
+	cfg.MultiagentChatterCap = parseFloat64EnvClamp("MULTIAGENT_CHATTER_CAP", 0.25, 0, 1)
+	if cfg.MultiagentHandoffProbability > cfg.MultiagentChatterCap {
+		cfg.MultiagentHandoffProbability = cfg.MultiagentChatterCap
+	}
+	if cfg.MultiagentBroadcastHandoffProbability > cfg.MultiagentChatterCap {
+		cfg.MultiagentBroadcastHandoffProbability = cfg.MultiagentChatterCap
+	}
+	if cfg.MultiagentBroadcastBranchingHandoffProbability > cfg.MultiagentChatterCap {
+		cfg.MultiagentBroadcastBranchingHandoffProbability = cfg.MultiagentChatterCap
+	}
+	if cfg.MultiagentHandoffMinProbability > cfg.MultiagentChatterCap {
+		cfg.MultiagentHandoffMinProbability = cfg.MultiagentChatterCap
+	}
+	if cfg.MultiagentHandoffMaxProbability > cfg.MultiagentChatterCap {
+		cfg.MultiagentHandoffMaxProbability = cfg.MultiagentChatterCap
+	}
 	if cfg.MultiagentHandoffMaxProbability < cfg.MultiagentHandoffMinProbability {
 		cfg.MultiagentHandoffMinProbability, cfg.MultiagentHandoffMaxProbability = cfg.MultiagentHandoffMaxProbability, cfg.MultiagentHandoffMinProbability
 	}
