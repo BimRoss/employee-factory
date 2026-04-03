@@ -72,7 +72,7 @@ If flagged, the bot runs one repair rewrite pass and only then posts. If repair 
 Phase 1 adds only ConfigMap keys; runtime Secrets stay the same.
 
 1. Merge this repo to the default branch and cut a semver tag so CI builds and pushes `geeemoney/employee-factory:<version>`.
-2. In [`rancher-admin`](https://github.com/bimross/rancher-admin), bump the `geeemoney/employee-factory` image tag on all four deployments under `admin/apps/employee-factory/` (`alex`, `tim`, `ross`, `garth`) to match the new tag.
+2. In [`rancher-admin`](https://github.com/bimross/rancher-admin), bump the `geeemoney/employee-factory` image tag on all five deployments under `admin/apps/employee-factory/` (`alex`, `tim`, `ross`, `garth`, `joanne`) to match the new tag.
 3. Commit to `rancher-admin` `master`; Fleet applies the new image and the updated `employee-factory-config` (retry/fallback env) from the same repo.
 
 ## Runtime secret sync (kubectl path)
