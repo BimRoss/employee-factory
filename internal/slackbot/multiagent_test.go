@@ -456,3 +456,22 @@ func TestRemovedPoolKeys(t *testing.T) {
 		t.Fatalf("expected removed=[joanne], got %v", removed)
 	}
 }
+
+func TestResolveBroadcastCandidatePool_presenceCheckKeepsFullPool(t *testing.T) {
+	cfg := testCfgSquadWithJoanne()
+	raw := "@everyone are you guys online"
+	got := resolveBroadcastCandidatePool(raw, cfg)
+	if len(got) != len(cfg.MultiagentOrder) {
+		t.Fatalf("expected full pool for presence check, got %v", got)
+	}
+}
+
+func TestPresenceAckForEmployeeKey(t *testing.T) {
+	ack := presenceAckForEmployeeKey("alex")
+	if strings.TrimSpace(ack) == "" {
+		t.Fatal("expected non-empty presence acknowledgment")
+	}
+	if strings.Contains(ack, "@") {
+		t.Fatalf("presence acknowledgment should not include mentions: %q", ack)
+	}
+}

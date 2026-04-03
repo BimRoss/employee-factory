@@ -60,3 +60,23 @@ func TestBuildAsyncSafeAck_Contract(t *testing.T) {
 		t.Fatalf("router ack should not ask new questions: %q", msg)
 	}
 }
+
+func TestClassifyPresenceCheck_DirectPing(t *testing.T) {
+	decision := ClassifyPresenceCheck("@everyone are you guys online")
+	if !decision.IsPresenceCheck {
+		t.Fatalf("expected presence check, got %+v", decision)
+	}
+	if decision.Confidence < 0.95 {
+		t.Fatalf("expected high confidence, got %.2f", decision.Confidence)
+	}
+	if len(decision.MatchedTerms) == 0 {
+		t.Fatal("expected matched terms for presence check")
+	}
+}
+
+func TestClassifyPresenceCheck_IgnoresOfflineArchitecture(t *testing.T) {
+	decision := ClassifyPresenceCheck("We should evaluate offline-first architecture for this feature.")
+	if decision.IsPresenceCheck {
+		t.Fatalf("expected non-presence decision, got %+v", decision)
+	}
+}

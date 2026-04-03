@@ -466,6 +466,59 @@ func (b *Bot) runMultiagentSession(ctx context.Context, channel, rawText string,
 	}
 }
 
+func (b *Bot) runBroadcastPresenceAckSession(ctx context.Context, channel, messageTS string, participants []string) {
+	if len(participants) == 0 {
+		return
+	}
+	slots := buildSlots(participants, 1, b.cfg.MultiagentBotUserIDs)
+	if len(slots) == 0 {
+		return
+	}
+
+	anchorTS := strings.TrimSpace(messageTS)
+	if anchorTS == "" {
+		return
+	}
+	poll := time.Duration(b.cfg.MultiagentPollInterval) * time.Millisecond
+	deadline := time.Duration(b.cfg.MultiagentWaitTimeoutSec) * time.Second
+	softDeadline := time.Duration(b.cfg.MultiagentSlotSoftTimeoutSec) * time.Second
+	allowDegraded := b.cfg.MultiagentAllowDegradedStart
+
+	selfKey, ok := squadKeyForSlackUser(b.cfg, b.botUserID)
+	if !ok {
+		return
+	}
+	ack := presenceAckForEmployeeKey(selfKey)
+	if strings.TrimSpace(ack) == "" {
+		return
+	}
+
+	for k, uid := range slots {
+		if uid != b.botUserID {
+			continue
+		}
+		waitCtx, cancel := context.WithTimeout(ctx, deadline)
+		waitResult, err := b.waitUntilSlot(waitCtx, channel, anchorTS, slots, k, poll, softDeadline, allowDegraded)
+		cancel()
+		if err != nil {
+			log.Printf("multiagent_presence: slot wait failed employee=%s slot=%d anchor=%s err=%v", b.cfg.EmployeeID, k, anchorTS, err)
+			return
+		}
+		log.Printf("multiagent_presence: slot ready employee=%s slot=%d anchor=%s wait_mode=%s polls=%d",
+			b.cfg.EmployeeID, k, anchorTS, waitResult.Mode, waitResult.Polls)
+		b.postPresenceAck(ctx, channel, ack)
+	}
+}
+
+func presenceAckForEmployeeKey(key string) string {
+	switch strings.ToLower(strings.TrimSpace(key)) {
+	case "ross", "tim", "alex", "garth", "joanne":
+		return "Yes, I am online."
+	default:
+		return "Yes, I am online."
+	}
+}
+
 const (
 	multiagentWaitModeExact    = "exact_slot_ready"
 	multiagentWaitModeDegraded = "degraded_start"
@@ -704,6 +757,26 @@ func (b *Bot) postMultiagentReply(ctx context.Context, channel, sourceText, user
 		strings.TrimSpace(b.cfg.EmployeeID), time.Since(startPost).Milliseconds(), err != nil)
 	if err != nil {
 		log.Printf("slack post message: %v", err)
+		return
+	}
+	if b.outbound != nil {
+		b.outbound.record(time.Now())
+	}
+}
+
+func (b *Bot) postPresenceAck(ctx context.Context, channel, text string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	now := time.Now()
+	if b.outbound != nil && !b.outbound.allow(now) {
+		log.Printf("slack outbound rate limit: skipping presence ack (employee=%s channel=%s)", b.cfg.EmployeeID, channel)
+		return
+	}
+	opts := []slack.MsgOption{slack.MsgOptionText(text, false)}
+	_, _, err := b.api.PostMessageContext(ctx, channel, opts...)
+	if err != nil {
+		log.Printf("slack post message (presence ack): %v", err)
 		return
 	}
 	if b.outbound != nil {

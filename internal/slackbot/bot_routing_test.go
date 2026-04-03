@@ -31,6 +31,27 @@ func TestShouldRouteAsBroadcast(t *testing.T) {
 	}
 }
 
+func TestDecideChannelRoute(t *testing.T) {
+	cfg := &config.Config{
+		MultiagentEnabled: true,
+		MultiagentBotUserIDs: map[string]string{
+			"ross": "UROSS001",
+			"tim":  "UTIM002",
+		},
+		MultiagentOrder: []string{"ross", "tim"},
+	}
+
+	if got := decideChannelRoute("@everyone are you guys online", cfg); got != routeBroadcastPresenceAck {
+		t.Fatalf("expected presence-ack route, got %q", got)
+	}
+	if got := decideChannelRoute("<!everyone> quick take", cfg); got != routeBroadcastNovelty {
+		t.Fatalf("expected broadcast novelty route, got %q", got)
+	}
+	if got := decideChannelRoute("<@UROSS001> only ross", cfg); got != routeNormal {
+		t.Fatalf("expected normal route for non-broadcast mention, got %q", got)
+	}
+}
+
 func TestBroadcastActivityTracking(t *testing.T) {
 	b := &Bot{
 		activeBroadcastByChannel: map[string]int{},
@@ -67,4 +88,3 @@ func TestWithLLMTimeoutUsesConfig(t *testing.T) {
 		t.Fatalf("expected ~2s timeout, got %s", remaining)
 	}
 }
-

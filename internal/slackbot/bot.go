@@ -47,7 +47,9 @@ Channel: You are in a shared channel—make the reply scannable in seconds.
 
 Multi-agent turns: If another bot already answered above you, do not copy their line. Add a distinct angle—risk, tradeoff, metric, or the next step they skipped—or ask them one sharp clarifying question with an @mention if needed.
 
-No filler: Do not repeat the same idea in different words or pad with “In summary / Overall.” Finish sentences; if tight on space, cut scope, not grammar.`
+No filler: Do not repeat the same idea in different words or pad with “In summary / Overall.” Finish sentences; if tight on space, cut scope, not grammar.
+
+Opener variation: Avoid reusing the same discourse opener/catchphrase in consecutive replies in the same channel or thread.`
 
 // Bot runs Slack Socket Mode and responds using OpenAI-compatible chat + persona.
 type Bot struct {
@@ -204,8 +206,16 @@ func (b *Bot) onMessage(ctx context.Context, ev *slackevents.MessageEvent) {
 		return
 	}
 
-	// Broadcast is authoritative when mixed with explicit mentions.
-	if shouldRouteAsBroadcast(rawText, b.cfg) {
+	route := decideChannelRoute(rawText, b.cfg)
+	if route == routeBroadcastPresenceAck {
+		if b.dispatchBroadcastPresenceAck(ctx, channel, rawText, ev.TimeStamp) {
+			log.Printf("slack_route: path=broadcast_presence_ack employee=%s channel=%s anchor=%s", strings.TrimSpace(b.cfg.EmployeeID), channel, strings.TrimSpace(ev.TimeStamp))
+		} else {
+			log.Printf("slack_route: path=broadcast_presence_ack_skipped employee=%s channel=%s anchor=%s", strings.TrimSpace(b.cfg.EmployeeID), channel, strings.TrimSpace(ev.TimeStamp))
+		}
+		return
+	}
+	if route == routeBroadcastNovelty {
 		if b.dispatchBroadcastMultiagent(ctx, channel, rawText, ev.TimeStamp) {
 			log.Printf("slack_route: path=broadcast employee=%s channel=%s anchor=%s", strings.TrimSpace(b.cfg.EmployeeID), channel, strings.TrimSpace(ev.TimeStamp))
 		} else {
@@ -236,6 +246,25 @@ func (b *Bot) onMessage(ctx context.Context, ev *slackevents.MessageEvent) {
 
 func shouldRouteAsBroadcast(rawText string, cfg *config.Config) bool {
 	return cfg != nil && cfg.MultiagentConfigured() && broadcastMultiagentTrigger(rawText)
+}
+
+type channelRouteKind string
+
+const (
+	routeNormal               channelRouteKind = "normal"
+	routeBroadcastPresenceAck channelRouteKind = "broadcast_presence_ack"
+	routeBroadcastNovelty     channelRouteKind = "broadcast_novelty"
+)
+
+func decideChannelRoute(rawText string, cfg *config.Config) channelRouteKind {
+	if !shouldRouteAsBroadcast(rawText, cfg) {
+		return routeNormal
+	}
+	presence := router.ClassifyPresenceCheck(rawText)
+	if presence.IsPresenceCheck {
+		return routeBroadcastPresenceAck
+	}
+	return routeBroadcastNovelty
 }
 
 func (b *Bot) onAppMention(ctx context.Context, ev *slackevents.AppMentionEvent) {
@@ -420,6 +449,32 @@ func (b *Bot) dispatchBroadcastMultiagent(ctx context.Context, channel, rawText 
 		b.beginBroadcast(channel)
 		defer b.endBroadcast(channel)
 		b.runMultiagentSession(ctx, channel, rawText, messageTS, participants, rounds, effectiveHandoff)
+	}()
+	return true
+}
+
+// dispatchBroadcastPresenceAck handles @everyone presence checks with a deterministic
+// one-line acknowledgment from each participant.
+func (b *Bot) dispatchBroadcastPresenceAck(ctx context.Context, channel, rawText string, messageTS string) bool {
+	if !b.cfg.MultiagentConfigured() {
+		return false
+	}
+	if !broadcastMultiagentTrigger(rawText) {
+		return false
+	}
+	basePool := orderedBroadcastPool(b.cfg)
+	pool := resolveBroadcastCandidatePool(rawText, b.cfg)
+	if len(pool) == 0 {
+		pool = basePool
+	}
+	participants := shuffleBroadcastParticipants(messageTS, pool, b.cfg.MultiagentShuffleSecret)
+	if len(participants) < 1 {
+		return false
+	}
+	go func() {
+		b.beginBroadcast(channel)
+		defer b.endBroadcast(channel)
+		b.runBroadcastPresenceAckSession(ctx, channel, messageTS, participants)
 	}()
 	return true
 }

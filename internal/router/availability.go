@@ -28,6 +28,13 @@ type AvailabilityDecision struct {
 	MatchedTerms []string
 }
 
+type PresenceDecision struct {
+	IsPresenceCheck bool
+	Confidence      float64
+	Reason          string
+	MatchedTerms    []string
+}
+
 type phraseRule struct {
 	phrase string
 	re     *regexp.Regexp
@@ -52,6 +59,15 @@ var signoffRules = []phraseRule{
 	{phrase: "log off", re: regexp.MustCompile(`\blog(?:ging)?\s+off\b`)},
 	{phrase: "call it a night", re: regexp.MustCompile(`\bcall(?:ing)?\s+it\s+a\s+night\b`)},
 	{phrase: "heading to bed", re: regexp.MustCompile(`\bheading\s+to\s+bed\b`)},
+}
+
+var presenceCheckRules = []phraseRule{
+	{phrase: "are you online", re: regexp.MustCompile(`\bare\s+you\s+(?:guys\s+)?online\b`)},
+	{phrase: "you guys online", re: regexp.MustCompile(`\byou\s+guys\s+online\b`)},
+	{phrase: "who is online", re: regexp.MustCompile(`\bwho(?:'s|\s+is)\s+online\b`)},
+	{phrase: "everyone online", re: regexp.MustCompile(`\beveryone\s+online\b`)},
+	{phrase: "online check", re: regexp.MustCompile(`\bonline\s+check\b`)},
+	{phrase: "roll call", re: regexp.MustCompile(`\broll\s+call\b`)},
 }
 
 func ClassifyAvailability(text string) AvailabilityDecision {
@@ -103,6 +119,33 @@ func BuildAsyncSafeAck(intent AvailabilityIntent) string {
 		return "Understood - I will switch to async while you are away. When you are back, I will continue from your latest priority in this thread."
 	default:
 		return ""
+	}
+}
+
+func ClassifyPresenceCheck(text string) PresenceDecision {
+	normalized := strings.TrimSpace(text)
+	if normalized == "" {
+		return PresenceDecision{
+			IsPresenceCheck: false,
+			Confidence:      1.0,
+			Reason:          "empty_text",
+		}
+	}
+
+	matches := matchPhrases(normalized, presenceCheckRules)
+	if len(matches) == 0 {
+		return PresenceDecision{
+			IsPresenceCheck: false,
+			Confidence:      1.0,
+			Reason:          "no_presence_signal",
+		}
+	}
+
+	return PresenceDecision{
+		IsPresenceCheck: true,
+		Confidence:      confidenceForMatches(len(matches), 0),
+		Reason:          "matched_presence_cue",
+		MatchedTerms:    uniqueTerms(matches),
 	}
 }
 
