@@ -16,7 +16,7 @@ if [[ ! -f "${ENV_FILE}" ]]; then
   exit 1
 fi
 
-for employee in alex tim ross garth; do
+for employee in alex tim ross garth joanne; do
   echo "==> syncing ${employee}"
   ENV_FILE="${ENV_FILE}" NAMESPACE="${NAMESPACE}" EMPLOYEE_ID="${employee}" \
     "${ROOT}/scripts/update-runtime-secrets.sh"
