@@ -80,10 +80,11 @@ func (b *Bot) tryHandleJoanneSendEmail(ctx context.Context, channel, rawText, re
 
 func (b *Bot) resolveJoanneEmailRecipient(ctx context.Context, explicitTo, requestUserID string) (email string, source string, err error) {
 	if to := strings.TrimSpace(explicitTo); to != "" {
-		if !isValidEmail(to) {
+		cleanTo := normalizeEmailAddress(to)
+		if !isValidEmail(cleanTo) {
 			return "", "", fmt.Errorf("invalid explicit recipient")
 		}
-		return to, "explicit", nil
+		return cleanTo, "explicit", nil
 	}
 	userID := strings.TrimSpace(requestUserID)
 	if userID == "" {
@@ -97,6 +98,7 @@ func (b *Bot) resolveJoanneEmailRecipient(ctx context.Context, explicitTo, reque
 		return "", "", fmt.Errorf("requesting user has no email in Slack profile")
 	}
 	to := strings.TrimSpace(user.Profile.Email)
+	to = normalizeEmailAddress(to)
 	if !isValidEmail(to) {
 		return "", "", fmt.Errorf("invalid inferred recipient")
 	}
@@ -140,4 +142,20 @@ func (b *Bot) postJoanneEmailStatus(ctx context.Context, channel, threadTS, text
 
 func isValidEmail(v string) bool {
 	return reLikelyEmail.MatchString(strings.TrimSpace(v))
+}
+
+func normalizeEmailAddress(raw string) string {
+	s := strings.TrimSpace(raw)
+	// Slack often wraps addresses as <mailto:user@example.com|user@example.com>.
+	if strings.HasPrefix(s, "<mailto:") && strings.HasSuffix(s, ">") {
+		s = strings.TrimPrefix(s, "<mailto:")
+		s = strings.TrimSuffix(s, ">")
+		if i := strings.Index(s, "|"); i > 0 {
+			s = s[:i]
+		}
+	}
+	if m := reLikelyEmail.FindString(s); strings.TrimSpace(m) != "" {
+		return strings.TrimSpace(m)
+	}
+	return strings.TrimSpace(strings.Trim(s, ">,;"))
 }
