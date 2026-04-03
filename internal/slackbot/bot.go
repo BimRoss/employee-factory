@@ -49,7 +49,8 @@ Multi-agent turns: If another bot already answered above you, do not copy their 
 
 No filler: Do not repeat the same idea in different words or pad with “In summary / Overall.” Finish sentences; if tight on space, cut scope, not grammar.
 
-Opener variation: Avoid reusing the same discourse opener/catchphrase in consecutive replies in the same channel or thread.`
+Opener variation: Avoid reusing the same discourse opener/catchphrase in consecutive replies in the same channel or thread.
+Opener hygiene: In normal replies, do not start with sterile acknowledgment stubs like "Acknowledging.", "Noted.", or "Understood." as a standalone first line. Open with the concrete move, decision, or answer.`
 
 // Bot runs Slack Socket Mode and responds using OpenAI-compatible chat + persona.
 type Bot struct {
