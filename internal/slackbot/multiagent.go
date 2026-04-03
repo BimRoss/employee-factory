@@ -431,10 +431,11 @@ func (b *Bot) runMultiagentSession(ctx context.Context, channel, rawText string,
 			log.Printf("multiagent: late_slot_post employee=%s anchor=%s slot=%d observed_prior=%d", b.cfg.EmployeeID, anchorTS, k, waitResult.ObservedPrior)
 		}
 
+		priorMsgs := clipMessagesToGrantBoundary(msgs, b.cfg.ChatAllowedUserID, len(msgs) > 0)
 		prior := formatPriorSquadTurns(
 			slots,
 			k,
-			msgs,
+			priorMsgs,
 			idToKey,
 			b.cfg.LLMThreadMaxRunes,
 			b.cfg.LLMContextWeightDecay,
@@ -448,7 +449,7 @@ func (b *Bot) runMultiagentSession(ctx context.Context, channel, rawText string,
 		if policy := buildMultiagentTurnPolicy(selfKey, k, len(slots)); policy != "" {
 			userPayload = policy + "\n\n" + userPayload
 		}
-		priorSelf := latestPriorEmployeeMessageInSquadMessages(msgs, b.botUserID)
+		priorSelf := latestPriorEmployeeMessageInSquadMessages(priorMsgs, b.botUserID)
 		userPayload = prependRethinkCue(userPayload, userQuestion, priorSelf)
 		userPayload = prependHostilityCue(userPayload, userQuestion)
 		if b.useAlexHints() && b.cfg.LLMAlexHints {

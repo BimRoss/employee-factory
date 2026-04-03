@@ -114,10 +114,18 @@ func isFirstReplyFromUser(msgs []slack.Message, threadTS, userID, msgTS string) 
 	return false
 }
 
-func threadTranscriptBefore(cfg *config.Config, botUserID string, msgs []slack.Message, threadTS, currentMsgTS string, maxRunes int) string {
+func threadTranscriptBefore(cfg *config.Config, botUserID string, msgs []slack.Message, threadTS, currentMsgTS, triggerUserID string, maxRunes int) string {
 	type threadLine struct {
 		role string
 		text string
+	}
+	grantUserID := ""
+	if cfg != nil {
+		grantUserID = cfg.ChatAllowedUserID
+	}
+	msgs = clipMessagesToGrantBoundary(msgs, grantUserID, shouldEnforceGrantBoundary(triggerUserID, grantUserID))
+	if len(msgs) == 0 {
+		return ""
 	}
 	var entries []threadLine
 	for _, m := range msgs {
@@ -284,7 +292,7 @@ func (b *Bot) handleThreadMessage(ctx context.Context, channel, userID, rawText,
 	if b.useAlexHints() && cfg.LLMAlexHints {
 		userText = router.WrapAlexUserMessage(userText)
 	}
-	tc := threadTranscriptBefore(cfg, b.botUserID, msgs, threadTS, messageTS, cfg.LLMThreadMaxRunes)
+	tc := threadTranscriptBefore(cfg, b.botUserID, msgs, threadTS, messageTS, userID, cfg.LLMThreadMaxRunes)
 	if tc != "" {
 		userText = tc + "\n\n" + userText
 	}

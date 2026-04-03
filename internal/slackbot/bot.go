@@ -236,7 +236,7 @@ func (b *Bot) onMessage(ctx context.Context, ev *slackevents.MessageEvent) {
 			return
 		}
 		log.Printf("slack_route: path=single_mention employee=%s channel=%s anchor=%s", strings.TrimSpace(b.cfg.EmployeeID), channel, strings.TrimSpace(ev.TimeStamp))
-		b.postLLMReply(ctx, channel, text, ev.TimeStamp)
+		b.postLLMReply(ctx, channel, text, ev.TimeStamp, ev.User)
 		return
 	}
 	if b.dispatchGeneralAutoReply(ctx, channel, rawText, ev) {
@@ -311,7 +311,7 @@ func (b *Bot) onAppMention(ctx context.Context, ev *slackevents.AppMentionEvent)
 	if text == "" {
 		return
 	}
-	b.postLLMReply(ctx, channel, text, ev.TimeStamp)
+	b.postLLMReply(ctx, channel, text, ev.TimeStamp, ev.User)
 }
 
 // trySquadBotMentionTrigger handles messages posted by a squad bot that @mention this bot.
@@ -350,7 +350,7 @@ func (b *Bot) trySquadBotMentionTrigger(ctx context.Context, channel, rawText st
 		text = "(no text besides mention)"
 	}
 	payload := "A squad bot addressed you in-channel:\n" + text
-	b.postLLMReply(ctx, channel, payload, ev.TimeStamp)
+	b.postLLMReply(ctx, channel, payload, ev.TimeStamp, ev.User)
 	return true
 }
 
@@ -535,7 +535,7 @@ func (b *Bot) dispatchGeneralAutoReply(ctx context.Context, channel, rawText str
 		if status == generalAutoReplyClaimBackendDown {
 			log.Printf("general_auto_reply: winner_fallback_without_claim employee=%s anchor=%s", selfKey, anchorTS)
 		}
-		if b.postLLMReplyWithResult(ctx, channel, rawText, anchorTS) {
+		if b.postLLMReplyWithResult(ctx, channel, rawText, anchorTS, ev.User) {
 			log.Printf("general_auto_reply: posted employee=%s path=winner anchor=%s claim_status=%s", selfKey, anchorTS, status)
 			return true
 		}
@@ -550,7 +550,7 @@ func (b *Bot) dispatchGeneralAutoReply(ctx context.Context, channel, rawText str
 		return false
 	}
 	delay := generalAutoReplyFailoverDelay(selfKey, b.cfg.MultiagentOrder)
-	go b.tryGeneralAutoReplyFailover(ctx, channel, rawText, anchorTS, selfKey, winner, delay)
+	go b.tryGeneralAutoReplyFailover(ctx, channel, rawText, anchorTS, ev.User, selfKey, winner, delay)
 	log.Printf("general_auto_reply: failover_scheduled employee=%s winner=%s delay=%s anchor=%s", selfKey, winner, delay, anchorTS)
 	return false
 }
@@ -581,7 +581,7 @@ func generalAutoReplyFailoverDelay(selfKey string, order []string) time.Duration
 	return base + 5*time.Second
 }
 
-func (b *Bot) tryGeneralAutoReplyFailover(ctx context.Context, channel, rawText, anchorTS, selfKey, winner string, delay time.Duration) {
+func (b *Bot) tryGeneralAutoReplyFailover(ctx context.Context, channel, rawText, anchorTS, sourceUserID, selfKey, winner string, delay time.Duration) {
 	if delay > 0 {
 		select {
 		case <-ctx.Done():
@@ -595,7 +595,7 @@ func (b *Bot) tryGeneralAutoReplyFailover(ctx context.Context, channel, rawText,
 		log.Printf("general_auto_reply: failover_not_selected employee=%s winner=%s anchor=%s claim_status=%s", selfKey, winner, anchorTS, status)
 		return
 	}
-	if b.postLLMReplyWithResult(ctx, channel, rawText, anchorTS) {
+	if b.postLLMReplyWithResult(ctx, channel, rawText, anchorTS, sourceUserID) {
 		log.Printf("general_auto_reply: posted employee=%s path=failover winner=%s anchor=%s claim_status=%s", selfKey, winner, anchorTS, status)
 		return
 	}
@@ -634,11 +634,11 @@ func (b *Bot) releaseGeneralAutoReplyClaim(ctx context.Context, channel, anchorT
 	}
 }
 
-func (b *Bot) postLLMReply(ctx context.Context, channel, userText, messageTS string) {
-	_ = b.postLLMReplyWithResult(ctx, channel, userText, messageTS)
+func (b *Bot) postLLMReply(ctx context.Context, channel, userText, messageTS, sourceUserID string) {
+	_ = b.postLLMReplyWithResult(ctx, channel, userText, messageTS, sourceUserID)
 }
 
-func (b *Bot) postLLMReplyWithResult(ctx context.Context, channel, userText, messageTS string) bool {
+func (b *Bot) postLLMReplyWithResult(ctx context.Context, channel, userText, messageTS, sourceUserID string) bool {
 	if b.applyAvailabilityRouter(ctx, availabilityRouteEvent{
 		Path:      "post_llm_channel",
 		Channel:   channel,
@@ -671,7 +671,7 @@ func (b *Bot) postLLMReplyWithResult(ctx context.Context, channel, userText, mes
 	if b.useAlexHints() && b.cfg.LLMAlexHints {
 		userPayload = router.WrapAlexUserMessage(userPayload)
 	}
-	if tc := b.channelHistoryContextBlock(ctx, channel, messageTS); tc != "" {
+	if tc := b.channelHistoryContextBlock(ctx, channel, messageTS, sourceUserID); tc != "" {
 		userPayload = tc + "\n\n" + userPayload
 	}
 	priorSelf := b.latestPriorEmployeeMessageInChannel(ctx, channel, messageTS)
@@ -812,7 +812,7 @@ func (b *Bot) isBroadcastActive(channel string) bool {
 
 // channelHistoryContextBlock loads recent messages on the channel timeline before the current
 // message (conversations.history). No threads/DMs—one open channel, linear context.
-func (b *Bot) channelHistoryContextBlock(ctx context.Context, channelID, currentMsgTS string) string {
+func (b *Bot) channelHistoryContextBlock(ctx context.Context, channelID, currentMsgTS, triggerUserID string) string {
 	if strings.TrimSpace(currentMsgTS) == "" {
 		return ""
 	}
@@ -833,6 +833,10 @@ func (b *Bot) channelHistoryContextBlock(ctx context.Context, channelID, current
 	msgs := append([]slack.Message(nil), resp.Messages...)
 	for i, j := 0, len(msgs)-1; i < j; i, j = i+1, j-1 {
 		msgs[i], msgs[j] = msgs[j], msgs[i]
+	}
+	msgs = clipMessagesToGrantBoundary(msgs, b.cfg.ChatAllowedUserID, shouldEnforceGrantBoundary(triggerUserID, b.cfg.ChatAllowedUserID))
+	if len(msgs) == 0 {
+		return ""
 	}
 	type historyLine struct {
 		role string

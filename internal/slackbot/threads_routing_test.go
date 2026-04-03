@@ -60,6 +60,7 @@ func TestThreadTranscriptBefore_includesRecencyWeights(t *testing.T) {
 	cfg := &config.Config{
 		LLMContextWeightDecay:  0.5,
 		LLMContextWeightWindow: 3,
+		ChatAllowedUserID:      "UGRANT",
 		MultiagentBotUserIDs: map[string]string{
 			"ross": "U111",
 		},
@@ -69,8 +70,27 @@ func TestThreadTranscriptBefore_includesRecencyWeights(t *testing.T) {
 		{Msg: slack.Msg{Timestamp: "2.000", User: "U111", Text: "second"}},
 		{Msg: slack.Msg{Timestamp: "3.000", User: "UHUMAN", Text: "third"}},
 	}
-	out := threadTranscriptBefore(cfg, "U999", msgs, "1.000", "9.000", 5000)
+	out := threadTranscriptBefore(cfg, "U999", msgs, "1.000", "9.000", "UGRANT", 5000)
 	if !strings.Contains(out, "[w=1.00]") || !strings.Contains(out, "[w=0.50]") {
 		t.Fatalf("expected weighted context markers, got %q", out)
+	}
+}
+
+func TestThreadTranscriptBefore_hardCutsAfterGrantForAgentTrigger(t *testing.T) {
+	cfg := &config.Config{
+		ChatAllowedUserID:      "UGRANT",
+		LLMContextWeightDecay:  0.5,
+		LLMContextWeightWindow: 3,
+	}
+	msgs := []slack.Message{
+		{Msg: slack.Msg{Timestamp: "1.000", User: "UGRANT", Text: "grant anchor"}},
+		{Msg: slack.Msg{Timestamp: "2.000", User: "UAGENT", Text: "agent follow-up"}},
+	}
+	out := threadTranscriptBefore(cfg, "UBOT", msgs, "1.000", "3.000", "UAGENT", 5000)
+	if strings.Contains(out, "agent follow-up") {
+		t.Fatalf("expected agent follow-up after grant to be excluded, got %q", out)
+	}
+	if !strings.Contains(out, "grant anchor") {
+		t.Fatalf("expected grant anchor retained, got %q", out)
 	}
 }
