@@ -24,6 +24,22 @@ func TestThreadRoutingShouldReply(t *testing.T) {
 	}
 }
 
+func TestThreadRoutingShouldReplyToSquadFollowup(t *testing.T) {
+	t.Parallel()
+	if !threadRoutingShouldReplyToSquadFollowup("alex", "ross", []string{"alex"}) {
+		t.Fatal("alex should reply when ross mentions alex")
+	}
+	if threadRoutingShouldReplyToSquadFollowup("alex", "alex", []string{"alex"}) {
+		t.Fatal("agent should not self-trigger on its own mention")
+	}
+	if threadRoutingShouldReplyToSquadFollowup("alex", "ross", nil) {
+		t.Fatal("no mention should not trigger followup")
+	}
+	if threadRoutingShouldReplyToSquadFollowup("alex", "ross", []string{"tim"}) {
+		t.Fatal("mentioning someone else should not trigger alex")
+	}
+}
+
 func TestSquadKeyForSlackUser(t *testing.T) {
 	t.Parallel()
 	cfg := &config.Config{

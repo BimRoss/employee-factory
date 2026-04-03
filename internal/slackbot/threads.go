@@ -29,6 +29,22 @@ func threadRoutingShouldReply(empKey string, ownerKey string, mentionedKeys []st
 	return strings.TrimSpace(empKey) == strings.TrimSpace(ownerKey) && ownerKey != ""
 }
 
+// threadRoutingShouldReplyToSquadFollowup allows explicit bot-to-bot handoffs inside a thread.
+// Only a different squad bot can trigger this path, and only when this bot is @mentioned.
+func threadRoutingShouldReplyToSquadFollowup(empKey, senderKey string, mentionedKeys []string) bool {
+	emp := strings.TrimSpace(strings.ToLower(empKey))
+	sender := strings.TrimSpace(strings.ToLower(senderKey))
+	if emp == "" || sender == "" || sender == emp {
+		return false
+	}
+	for _, k := range mentionedKeys {
+		if strings.TrimSpace(strings.ToLower(k)) == emp {
+			return true
+		}
+	}
+	return false
+}
+
 func squadKeyForSlackUser(cfg *config.Config, userID string) (key string, ok bool) {
 	if cfg == nil || len(cfg.MultiagentBotUserIDs) == 0 {
 		return "", false
@@ -219,12 +235,28 @@ func (b *Bot) handleThreadMessage(ctx context.Context, channel, userID, rawText,
 	if !cfg.ThreadsEnabled() || channel != cfg.SlackChatChannelID {
 		return true
 	}
-	if userID != cfg.ChatAllowedUserID {
-		return true
-	}
 	if !cfg.MultiagentConfigured() {
 		log.Printf("threads: multiagent not configured, skipping")
 		return true
+	}
+
+	emp := strings.ToLower(strings.TrimSpace(cfg.EmployeeID))
+	mentioned := mentionedSquadKeys(rawText, cfg)
+	senderKey, senderIsSquad := squadKeyForSlackUser(cfg, userID)
+
+	allowSquadFollowup := false
+	if userID != cfg.ChatAllowedUserID {
+		allowSquadFollowup = senderIsSquad && threadRoutingShouldReplyToSquadFollowup(emp, senderKey, mentioned)
+		if !allowSquadFollowup {
+			log.Printf(
+				"threads: skip non-ceo thread message employee=%s sender=%s sender_key=%s mentioned=%v",
+				emp,
+				strings.TrimSpace(userID),
+				strings.TrimSpace(senderKey),
+				mentioned,
+			)
+			return true
+		}
 	}
 
 	msgs, err := b.fetchThreadMessages(ctx, channel, threadTS)
@@ -232,17 +264,16 @@ func (b *Bot) handleThreadMessage(ctx context.Context, channel, userID, rawText,
 		log.Printf("threads: fetch replies: %v", err)
 		return true
 	}
-	root := findThreadRoot(msgs, threadTS)
-	ownerKey, err := b.resolveThreadOwner(ctx, channel, threadTS, msgs, root, rawText, messageTS)
-	if err != nil {
-		log.Printf("threads: owner: %v", err)
-		return true
-	}
-
-	emp := strings.ToLower(strings.TrimSpace(cfg.EmployeeID))
-	mentioned := mentionedSquadKeys(rawText, cfg)
-	if !threadRoutingShouldReply(emp, ownerKey, mentioned) {
-		return true
+	if !allowSquadFollowup {
+		root := findThreadRoot(msgs, threadTS)
+		ownerKey, err := b.resolveThreadOwner(ctx, channel, threadTS, msgs, root, rawText, messageTS)
+		if err != nil {
+			log.Printf("threads: owner: %v", err)
+			return true
+		}
+		if !threadRoutingShouldReply(emp, ownerKey, mentioned) {
+			return true
+		}
 	}
 
 	squadIDs := squadUserIDSet(cfg)
@@ -257,8 +288,12 @@ func (b *Bot) handleThreadMessage(ctx context.Context, channel, userID, rawText,
 	if tc != "" {
 		userText = tc + "\n\n" + userText
 	}
-	log.Printf("context_build: path=thread employee=%s channel=%s payload_runes=%d",
-		strings.TrimSpace(cfg.EmployeeID), strings.TrimSpace(channel), utf8.RuneCountInString(userText))
+	logPath := "thread"
+	if allowSquadFollowup {
+		logPath = "thread_squad_followup"
+	}
+	log.Printf("context_build: path=%s employee=%s channel=%s payload_runes=%d",
+		logPath, strings.TrimSpace(cfg.EmployeeID), strings.TrimSpace(channel), utf8.RuneCountInString(userText))
 
 	b.postLLMReplyInThread(ctx, channel, userText, messageTS, threadTS)
 	return true
