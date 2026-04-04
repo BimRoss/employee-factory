@@ -23,6 +23,7 @@ type rossOpsActionExtract struct {
 	TailLines    int64   `json:"tail_lines,omitempty"`
 	SinceSeconds int64   `json:"since_seconds,omitempty"`
 	Limit        int     `json:"limit,omitempty"`
+	RevealFull   bool    `json:"reveal_full,omitempty"`
 	Confidence   float64 `json:"confidence,omitempty"`
 	Reason       string  `json:"reason,omitempty"`
 }
@@ -37,6 +38,7 @@ type rossOpsAction struct {
 	TailLines    int64
 	SinceSeconds int64
 	Limit        int
+	RevealFull   bool
 }
 
 func rossOpsActionSchema() jsonschema.Definition {
@@ -51,7 +53,7 @@ func rossOpsActionSchema() jsonschema.Definition {
 			},
 			"operation": {
 				Type:        jsonschema.String,
-				Enum:        []string{string(opsproxy.OperationK8sStatus), string(opsproxy.OperationK8sLogs), string(opsproxy.OperationRedisRead)},
+				Enum:        []string{string(opsproxy.OperationK8sStatus), string(opsproxy.OperationK8sLogs), string(opsproxy.OperationRedisRead), string(opsproxy.OperationWaitlistEmails)},
 				Description: "Desired read-only operation.",
 			},
 			"namespace": {
@@ -86,6 +88,10 @@ func rossOpsActionSchema() jsonschema.Definition {
 				Type:        jsonschema.Number,
 				Description: "Result size limit.",
 			},
+			"reveal_full": {
+				Type:        jsonschema.Boolean,
+				Description: "Whether full emails should be returned (Grant-only).",
+			},
 			"confidence": {
 				Type:        jsonschema.Number,
 				Description: "Confidence score 0.0 to 1.0.",
@@ -99,7 +105,7 @@ func rossOpsActionSchema() jsonschema.Definition {
 	}
 }
 
-func (b *Bot) tryHandleRossOps(ctx context.Context, channel, rawText, messageTS, threadTS string) bool {
+func (b *Bot) tryHandleRossOps(ctx context.Context, channel, rawText, requestUserID, messageTS, threadTS string) bool {
 	if b == nil || b.cfg == nil {
 		return false
 	}
@@ -128,7 +134,7 @@ func (b *Bot) tryHandleRossOps(ctx context.Context, channel, rawText, messageTS,
 		log.Printf("ross_ops: log_only=true message_ts=%s source=%s operation=%s", strings.TrimSpace(messageTS), source, action.Operation)
 		return false
 	}
-	go b.handleRossOpsSafely(ctx, channel, threadTS, messageTS, action)
+	go b.handleRossOpsSafely(ctx, channel, requestUserID, threadTS, messageTS, action)
 	return true
 }
 
@@ -144,8 +150,9 @@ func resolveRossOpsAction(raw string, extract rossOpsActionExtract, extractErr e
 			TailLines:    extract.TailLines,
 			SinceSeconds: extract.SinceSeconds,
 			Limit:        extract.Limit,
+			RevealFull:   extract.RevealFull,
 		}
-		if action.Operation == opsproxy.OperationK8sStatus || action.Operation == opsproxy.OperationK8sLogs || action.Operation == opsproxy.OperationRedisRead {
+		if action.Operation == opsproxy.OperationK8sStatus || action.Operation == opsproxy.OperationK8sLogs || action.Operation == opsproxy.OperationRedisRead || action.Operation == opsproxy.OperationWaitlistEmails {
 			return action, true, "extractor"
 		}
 	}
@@ -162,6 +169,12 @@ func parseRossOpsAction(raw string) (rossOpsAction, bool) {
 	}
 	action := rossOpsAction{}
 	if strings.Contains(text, "redis") || strings.Contains(text, "cache key") || strings.Contains(text, "cache") {
+		if strings.Contains(text, "waitlist") && strings.Contains(text, "email") {
+			action.Operation = opsproxy.OperationWaitlistEmails
+			action.Limit = 100
+			action.RevealFull = strings.Contains(text, "full") || strings.Contains(text, "unmask")
+			return action, true
+		}
 		action.Operation = opsproxy.OperationRedisRead
 		if idx := strings.Index(text, "key "); idx >= 0 {
 			action.RedisKey = strings.TrimSpace(raw[idx+len("key "):])
@@ -206,7 +219,7 @@ func (b *Bot) extractRossOpsAction(ctx context.Context, cmdText string) (rossOps
 	defer cancel()
 
 	systemPrompt := "You classify whether a Slack message is a Ross operations data request. Respond only with schema-compliant JSON."
-	userPrompt := "Message:\n" + strings.TrimSpace(cmdText) + "\n\nRules:\n- intent=ops_query only for explicit requests to inspect infrastructure/cache state.\n- operation must be one of k8s_status, k8s_logs, redis_read.\n- If unsure, use intent=none.\n- Never invent namespaces, targets, keys, or logs."
+	userPrompt := "Message:\n" + strings.TrimSpace(cmdText) + "\n\nRules:\n- intent=ops_query only for explicit requests to inspect infrastructure/cache state.\n- operation must be one of k8s_status, k8s_logs, redis_read, waitlist_emails.\n- If user asks for waitlist emails, use waitlist_emails.\n- If unsure, use intent=none.\n- Never invent namespaces, targets, keys, or logs."
 	err := b.llm.ExtractStructured(extractCtx, systemPrompt, userPrompt, rossOpsActionSchema(), &out, "ross_ops_query")
 	if err != nil {
 		return rossOpsActionExtract{}, err
@@ -228,16 +241,16 @@ func (b *Bot) extractRossOpsAction(ctx context.Context, cmdText string) (rossOps
 	return out, nil
 }
 
-func (b *Bot) handleRossOpsSafely(parent context.Context, channel, threadTS, messageTS string, action rossOpsAction) {
+func (b *Bot) handleRossOpsSafely(parent context.Context, channel, requestUserID, threadTS, messageTS string, action rossOpsAction) {
 	defer func() {
 		if r := recover(); r != nil {
 			log.Printf("ross_ops: panic recovered message_ts=%s panic=%v", strings.TrimSpace(messageTS), r)
 		}
 	}()
-	b.handleRossOps(parent, channel, threadTS, action)
+	b.handleRossOps(parent, channel, requestUserID, threadTS, action)
 }
 
-func (b *Bot) handleRossOps(parent context.Context, channel, threadTS string, action rossOpsAction) {
+func (b *Bot) handleRossOps(parent context.Context, channel, requestUserID, threadTS string, action rossOpsAction) {
 	ctx, cancel := context.WithTimeout(parent, 20*time.Second)
 	defer cancel()
 	if b.opsProxyClient == nil {
@@ -303,8 +316,22 @@ func (b *Bot) handleRossOps(parent context.Context, channel, threadTS string, ac
 			return
 		}
 		b.postRossOpsStatus(ctx, channel, threadTS, formatRossRedis(resp))
+	case opsproxy.OperationWaitlistEmails:
+		if strings.TrimSpace(requestUserID) != strings.TrimSpace(b.cfg.ChatAllowedUserID) {
+			b.postRossOpsStatus(ctx, channel, threadTS, "I can only return waitlist emails for the authorized operator.")
+			return
+		}
+		resp, err := b.opsProxyClient.WaitlistEmails(ctx, opsproxy.WaitlistEmailsRequest{
+			Limit:      action.Limit,
+			RevealFull: action.RevealFull,
+		})
+		if err != nil {
+			b.postRossOpsStatus(ctx, channel, threadTS, "I could not fetch waitlist emails from Redis.")
+			return
+		}
+		b.postRossOpsStatus(ctx, channel, threadTS, formatRossWaitlistEmails(resp, action.RevealFull))
 	default:
-		b.postRossOpsStatus(ctx, channel, threadTS, "I can run `k8s_status`, `k8s_logs`, or `redis_read` once the request is specific.")
+		b.postRossOpsStatus(ctx, channel, threadTS, "I can run `k8s_status`, `k8s_logs`, `redis_read`, or `waitlist_emails` once the request is specific.")
 	}
 }
 
@@ -333,6 +360,21 @@ func formatRossRedis(resp opsproxy.RedisReadResponse) string {
 	lines := []string{"Redis results:"}
 	for _, item := range resp.Items {
 		lines = append(lines, fmt.Sprintf("- `%s` (%s): %s", item.Key, item.Type, item.Value))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func formatRossWaitlistEmails(resp opsproxy.WaitlistEmailsResponse, revealFull bool) string {
+	if len(resp.Emails) == 0 {
+		return "No waitlist emails found in the allowed Redis prefixes."
+	}
+	header := "Waitlist emails (masked):"
+	if revealFull {
+		header = "Waitlist emails:"
+	}
+	lines := []string{header}
+	for _, item := range resp.Emails {
+		lines = append(lines, fmt.Sprintf("- `%s`", strings.TrimSpace(item.Email)))
 	}
 	return strings.Join(lines, "\n")
 }

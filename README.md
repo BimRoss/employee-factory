@@ -99,12 +99,13 @@ Ross can service prompts like “check what’s deployed”, “kubernetes logs�
 ### Required env/runtime keys (Ross + ops-proxy)
 
 - `ROSS_OPS_ENABLED=true`
-- `ROSS_OPS_LOG_ONLY=true` for first rollout pass (classification + trace only, no proxy execution)
+- `ROSS_OPS_LOG_ONLY=false` to execute tool calls in production (`true` remains available for dry-run debugging)
 - `ROSS_OPS_PROXY_URL` (for Ross runtime; defaults to in-cluster service URL)
 - `ROSS_OPS_PROXY_TOKEN` (shared auth token between Ross and the proxy)
 - `ROSS_OPS_DEFAULT_NAMESPACE` (optional default namespace for status/log requests)
 - `OPS_PROXY_ALLOWED_NAMESPACES` (comma-separated namespace allowlist)
 - `OPS_PROXY_ALLOWED_REDIS_PREFIXES` (comma-separated key-prefix allowlist)
+- `OPS_PROXY_WAITLIST_PREFIXES` (comma-separated prefix allowlist specifically used by waitlist email extraction)
 
 The secret sync script writes both `ROSS_OPS_PROXY_TOKEN` and `OPS_PROXY_AUTH_TOKEN` so Ross and the proxy can share one token source from `employee-factory-ross-runtime`.
 
@@ -115,8 +116,9 @@ The secret sync script writes both `ROSS_OPS_PROXY_TOKEN` and `OPS_PROXY_AUTH_TO
   - `POST /k8s/status`
   - `POST /k8s/logs`
   - `POST /redis/read`
+  - `POST /redis/waitlist-emails`
 - Requests are bounded by namespace/prefix allowlists and short timeouts.
-- During staged rollout, keep `ROSS_OPS_LOG_ONLY=true`, inspect `ross_ops` logs, then switch to `false` to enforce tool execution.
+- Waitlist email extraction is Grant-gated and masked by default unless full reveal is explicitly requested.
 - Responses are posted back into the same channel/thread.
 
 ## Joanne Gmail send-email tooling (first vertical slice)

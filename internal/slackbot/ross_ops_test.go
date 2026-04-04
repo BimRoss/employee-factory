@@ -51,3 +51,16 @@ func TestParseRossOpsAction_RedisDefaultPrefix(t *testing.T) {
 		t.Fatalf("expected default redis prefix")
 	}
 }
+
+func TestParseRossOpsAction_WaitlistEmails(t *testing.T) {
+	action, matched := parseRossOpsAction("can you give me full waitlist emails from redis")
+	if !matched {
+		t.Fatalf("expected waitlist match")
+	}
+	if action.Operation != opsproxy.OperationWaitlistEmails {
+		t.Fatalf("operation mismatch: %q", action.Operation)
+	}
+	if !action.RevealFull {
+		t.Fatalf("expected reveal_full to be true")
+	}
+}

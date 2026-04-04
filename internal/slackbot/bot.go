@@ -226,7 +226,7 @@ func (b *Bot) onMessage(ctx context.Context, ev *slackevents.MessageEvent) {
 	}) {
 		return
 	}
-	if b.tryHandleRossOps(ctx, channel, rawText, ev.TimeStamp, "") {
+	if b.tryHandleRossOps(ctx, channel, rawText, ev.User, ev.TimeStamp, "") {
 		return
 	}
 	if b.tryHandleJoanneSendEmail(ctx, channel, rawText, ev.User, ev.TimeStamp, "") {
@@ -339,7 +339,7 @@ func (b *Bot) onAppMention(ctx context.Context, ev *slackevents.AppMentionEvent)
 	}) {
 		return
 	}
-	if b.tryHandleRossOps(ctx, channel, rawText, ev.TimeStamp, strings.TrimSpace(ev.ThreadTimeStamp)) {
+	if b.tryHandleRossOps(ctx, channel, rawText, ev.User, ev.TimeStamp, strings.TrimSpace(ev.ThreadTimeStamp)) {
 		return
 	}
 	if b.tryHandleJoanneSendEmail(ctx, channel, rawText, ev.User, ev.TimeStamp, strings.TrimSpace(ev.ThreadTimeStamp)) {

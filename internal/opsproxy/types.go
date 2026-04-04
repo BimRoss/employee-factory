@@ -3,9 +3,10 @@ package opsproxy
 type Operation string
 
 const (
-	OperationK8sStatus Operation = "k8s_status"
-	OperationK8sLogs   Operation = "k8s_logs"
-	OperationRedisRead Operation = "redis_read"
+	OperationK8sStatus      Operation = "k8s_status"
+	OperationK8sLogs        Operation = "k8s_logs"
+	OperationRedisRead      Operation = "redis_read"
+	OperationWaitlistEmails Operation = "waitlist_emails"
 )
 
 type StatusRequest struct {
@@ -70,4 +71,19 @@ type RedisItem struct {
 
 type RedisReadResponse struct {
 	Items []RedisItem `json:"items"`
+}
+
+type WaitlistEmailsRequest struct {
+	Prefix     string `json:"prefix,omitempty"`
+	Limit      int    `json:"limit,omitempty"`
+	RevealFull bool   `json:"reveal_full,omitempty"`
+}
+
+type WaitlistEmail struct {
+	Email  string `json:"email"`
+	Source string `json:"source,omitempty"`
+}
+
+type WaitlistEmailsResponse struct {
+	Emails []WaitlistEmail `json:"emails"`
 }

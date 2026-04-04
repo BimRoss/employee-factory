@@ -62,6 +62,14 @@ func (c *Client) RedisRead(ctx context.Context, req RedisReadRequest) (RedisRead
 	return out, nil
 }
 
+func (c *Client) WaitlistEmails(ctx context.Context, req WaitlistEmailsRequest) (WaitlistEmailsResponse, error) {
+	var out WaitlistEmailsResponse
+	if err := c.postJSON(ctx, "/redis/waitlist-emails", req, &out); err != nil {
+		return WaitlistEmailsResponse{}, err
+	}
+	return out, nil
+}
+
 func (c *Client) postJSON(ctx context.Context, endpoint string, reqBody any, out any) error {
 	payload, err := json.Marshal(reqBody)
 	if err != nil {

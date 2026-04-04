@@ -7,6 +7,7 @@ func TestLoadProxyConfigFromEnv_Validation(t *testing.T) {
 	t.Setenv("OPS_PROXY_AUTH_TOKEN", "")
 	t.Setenv("OPS_PROXY_ALLOWED_NAMESPACES", "")
 	t.Setenv("OPS_PROXY_ALLOWED_REDIS_PREFIXES", "")
+	t.Setenv("OPS_PROXY_WAITLIST_PREFIXES", "")
 
 	if _, err := LoadProxyConfigFromEnv(); err == nil {
 		t.Fatal("expected validation error without required env")
@@ -18,6 +19,7 @@ func TestLoadProxyConfigFromEnv_Success(t *testing.T) {
 	t.Setenv("OPS_PROXY_AUTH_TOKEN", "secret")
 	t.Setenv("OPS_PROXY_ALLOWED_NAMESPACES", "employee-factory,subnet-signal")
 	t.Setenv("OPS_PROXY_ALLOWED_REDIS_PREFIXES", "thread_owner:,ops:")
+	t.Setenv("OPS_PROXY_WAITLIST_PREFIXES", "waitlist:")
 
 	cfg, err := LoadProxyConfigFromEnv()
 	if err != nil {
@@ -31,5 +33,8 @@ func TestLoadProxyConfigFromEnv_Success(t *testing.T) {
 	}
 	if len(cfg.AllowedRedisPrefixes) != 2 {
 		t.Fatalf("redis prefix allowlist mismatch: %+v", cfg.AllowedRedisPrefixes)
+	}
+	if len(cfg.WaitlistPrefixes) != 1 {
+		t.Fatalf("waitlist prefix allowlist mismatch: %+v", cfg.WaitlistPrefixes)
 	}
 }

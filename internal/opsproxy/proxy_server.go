@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -66,6 +67,7 @@ func (s *ProxyServer) Handler() http.Handler {
 	mux.HandleFunc("/k8s/status", s.requireAuth(s.handleK8sStatus))
 	mux.HandleFunc("/k8s/logs", s.requireAuth(s.handleK8sLogs))
 	mux.HandleFunc("/redis/read", s.requireAuth(s.handleRedisRead))
+	mux.HandleFunc("/redis/waitlist-emails", s.requireAuth(s.handleWaitlistEmails))
 	return mux
 }
 
@@ -327,6 +329,41 @@ func (s *ProxyServer) handleRedisRead(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
+func (s *ProxyServer) handleWaitlistEmails(w http.ResponseWriter, r *http.Request) {
+	if s.redis == nil {
+		writeErr(w, http.StatusServiceUnavailable, "redis is not configured")
+		return
+	}
+	var req WaitlistEmailsRequest
+	if err := decodeJSONBody(r, &req); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	prefix := strings.TrimSpace(req.Prefix)
+	if prefix == "" {
+		prefix = s.cfg.WaitlistPrefixes[0]
+	}
+	if !s.waitlistPrefixAllowed(prefix) {
+		writeErr(w, http.StatusForbidden, "waitlist prefix is not allowed")
+		return
+	}
+	limit := req.Limit
+	if limit <= 0 {
+		limit = s.cfg.DefaultWaitlistLimit
+	}
+	if limit > s.cfg.MaxWaitlistLimit {
+		limit = s.cfg.MaxWaitlistLimit
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), s.cfg.RequestTimeout)
+	defer cancel()
+	resp, err := s.readWaitlistEmails(ctx, prefix, limit, req.RevealFull)
+	if err != nil {
+		writeErr(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
 func (s *ProxyServer) readRedis(ctx context.Context, key, prefix string, limit int) (RedisReadResponse, error) {
 	if key != "" {
 		if !s.redisPrefixAllowed(key) {
@@ -367,6 +404,57 @@ func (s *ProxyServer) readRedis(ctx context.Context, key, prefix string, limit i
 	return RedisReadResponse{Items: items}, nil
 }
 
+var emailRegex = regexp.MustCompile(`(?i)\b[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}\b`)
+
+func (s *ProxyServer) readWaitlistEmails(ctx context.Context, prefix string, limit int, revealFull bool) (WaitlistEmailsResponse, error) {
+	match := prefix + "*"
+	seen := map[string]struct{}{}
+	out := make([]WaitlistEmail, 0, limit)
+	var cursor uint64
+	for len(out) < limit {
+		keys, next, err := s.redis.Scan(ctx, cursor, match, int64(limit*3)).Result()
+		if err != nil {
+			return WaitlistEmailsResponse{}, fmt.Errorf("redis scan: %w", err)
+		}
+		for _, key := range keys {
+			item, err := s.readRedisKey(ctx, key)
+			if err != nil {
+				continue
+			}
+			found := emailRegex.FindAllString(item.Value, -1)
+			for _, email := range found {
+				normalized := strings.ToLower(strings.TrimSpace(email))
+				if normalized == "" {
+					continue
+				}
+				if _, ok := seen[normalized]; ok {
+					continue
+				}
+				seen[normalized] = struct{}{}
+				value := normalized
+				if !revealFull {
+					value = maskEmail(normalized)
+				}
+				out = append(out, WaitlistEmail{
+					Email:  value,
+					Source: key,
+				})
+				if len(out) >= limit {
+					break
+				}
+			}
+			if len(out) >= limit {
+				break
+			}
+		}
+		cursor = next
+		if cursor == 0 {
+			break
+		}
+	}
+	return WaitlistEmailsResponse{Emails: out}, nil
+}
+
 func (s *ProxyServer) readRedisKey(ctx context.Context, key string) (RedisItem, error) {
 	typ, err := s.redis.Type(ctx, key).Result()
 	if err != nil {
@@ -388,6 +476,22 @@ func (s *ProxyServer) readRedisKey(ctx context.Context, key string) (RedisItem, 
 		items, lerr := s.redis.LRange(ctx, key, 0, 20).Result()
 		if lerr != nil {
 			err = lerr
+		} else {
+			b, _ := json.Marshal(items)
+			value = string(b)
+		}
+	case "set":
+		items, serr := s.redis.SMembers(ctx, key).Result()
+		if serr != nil {
+			err = serr
+		} else {
+			b, _ := json.Marshal(items)
+			value = string(b)
+		}
+	case "zset":
+		items, zerr := s.redis.ZRangeWithScores(ctx, key, 0, 20).Result()
+		if zerr != nil {
+			err = zerr
 		} else {
 			b, _ := json.Marshal(items)
 			value = string(b)
@@ -481,6 +585,23 @@ func (s *ProxyServer) redisPrefixAllowed(v string) bool {
 	return false
 }
 
+func (s *ProxyServer) waitlistPrefixAllowed(v string) bool {
+	value := strings.TrimSpace(v)
+	if value == "" {
+		return false
+	}
+	for _, prefix := range s.cfg.WaitlistPrefixes {
+		p := strings.TrimSpace(prefix)
+		if p == "" {
+			continue
+		}
+		if strings.HasPrefix(value, p) {
+			return true
+		}
+	}
+	return false
+}
+
 func decodeJSONBody(r *http.Request, out any) error {
 	body, err := io.ReadAll(io.LimitReader(r.Body, 256*1024))
 	if err != nil {
@@ -506,4 +627,20 @@ func writeErr(w http.ResponseWriter, status int, msg string) {
 
 func subtleTrim(v string) string {
 	return strings.TrimSpace(v)
+}
+
+func maskEmail(email string) string {
+	parts := strings.Split(strings.TrimSpace(email), "@")
+	if len(parts) != 2 {
+		return email
+	}
+	local := parts[0]
+	domain := parts[1]
+	if len(local) == 0 {
+		return "***@" + domain
+	}
+	if len(local) <= 2 {
+		return local[:1] + "***@" + domain
+	}
+	return local[:1] + "***" + local[len(local)-1:] + "@" + domain
 }
