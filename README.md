@@ -50,6 +50,35 @@ When a plain (no-bot-mention, no channel-wide summon) message is posted in `#gen
 - Router policy is checked at Slack ingress and again pre-LLM in channel/thread/multi-agent paths so edge event shapes do not bypass safety.
 - Enforced behavior posts one concise acknowledgment and suppresses additional asks/mentions for that message path.
 
+## Runtime intelligence lessons (v1)
+
+`employee-factory` now supports a runtime-first, text-based lesson layer that can learn subtle behavior cues over time without a git commit loop.
+
+- Capture happens after successful posts on channel/thread/multi-agent reply paths.
+- Lessons are stored in Redis under:
+  - `employee-factory:lessons:{employee}:events`
+  - `employee-factory:lessons:{employee}:active`
+- Prompt injection is bounded and subtle (`Runtime lessons (apply subtly): ...`), capped by `LESSONS_MAX_ACTIVE` and `LESSONS_MAX_PROMPT_RUNES`.
+- Guardrails include confidence threshold, dedupe, TTL expiry, and secret-like text rejection.
+
+### Runtime flags
+
+- `LESSONS_ENABLED` (default `false`)
+- `LESSONS_LOG_ONLY` (default `true`)
+- `LESSONS_AUTO_APPLY` (default `true`)
+- `LESSONS_MIN_CONFIDENCE` (default `0.8`)
+- `LESSONS_MAX_ACTIVE` (default `3`)
+- `LESSONS_TTL_SEC` (default `604800`)
+- `LESSONS_MAX_EVENTS` (default `200`)
+- `LESSONS_MAX_PROMPT_RUNES` (default `600`)
+
+### Rollout sequence
+
+1. Set `LESSONS_ENABLED=true` and keep `LESSONS_LOG_ONLY=true`.
+2. Verify `runtime_lessons:` logs (capture, skipped reasons, promotions).
+3. Flip `LESSONS_LOG_ONLY=false` for one employee (recommended: `tim`) with defaults.
+4. Expand to all employees after observing stable promoted/skipped quality.
+
 ### Turn quality policy (runtime-enforced prompt block)
 
 During multi-agent sessions, each slot now receives an explicit policy block before LLM generation:

@@ -455,6 +455,7 @@ func (b *Bot) runMultiagentSession(ctx context.Context, channel, rawText string,
 		if b.useAlexHints() && b.cfg.LLMAlexHints {
 			userPayload = router.WrapAlexUserMessage(userPayload)
 		}
+		userPayload = b.prependRuntimeLessons(ctx, b.cfg.EmployeeID, userPayload)
 
 		log.Printf("multiagent: generating employee=%s slot=%d user_payload_runes=%d (includes prior squad context when slot>0)",
 			b.cfg.EmployeeID, k, utf8.RuneCountInString(userPayload))
@@ -763,6 +764,7 @@ func (b *Bot) postMultiagentReply(ctx context.Context, channel, sourceText, user
 	if b.outbound != nil {
 		b.outbound.record(time.Now())
 	}
+	b.recordRuntimeLesson(ctx, "post_llm_multiagent", channel, "", messageTS, sourceText, reply)
 }
 
 func (b *Bot) postPresenceAck(ctx context.Context, channel, text string) {

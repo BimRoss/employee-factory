@@ -11,6 +11,7 @@ import (
 
 	"github.com/bimross/employee-factory/internal/config"
 	"github.com/bimross/employee-factory/internal/gmailsender"
+	"github.com/bimross/employee-factory/internal/lessons"
 	"github.com/bimross/employee-factory/internal/llm"
 	"github.com/bimross/employee-factory/internal/opsproxy"
 	"github.com/bimross/employee-factory/internal/persona"
@@ -75,6 +76,7 @@ type Bot struct {
 	generalAutoReplyLock *generalAutoReplyLocker
 	gmailSender          *gmailsender.Sender
 	opsProxyClient       *opsproxy.Client
+	runtimeLessons       *lessons.Manager
 }
 
 // New constructs a Socket Mode bot. owner may be nil (human-root owner is inferred from thread history).
@@ -83,6 +85,7 @@ func New(cfg *config.Config, lm *llm.EmployeeLLM, p *persona.Loader, owner threa
 	window := time.Duration(cfg.SlackOutboundWindowSec) * time.Second
 	var sender *gmailsender.Sender
 	var opsClient *opsproxy.Client
+	var runtimeLessonsStore lessons.Store = lessons.NoopStore{}
 	if strings.EqualFold(strings.TrimSpace(cfg.EmployeeID), "joanne") && cfg.JoanneEmailEnabled {
 		s, err := gmailsender.New(cfg)
 		if err != nil {
@@ -99,6 +102,14 @@ func New(cfg *config.Config, lm *llm.EmployeeLLM, p *persona.Loader, owner threa
 			opsClient = client
 		}
 	}
+	if strings.TrimSpace(cfg.RedisURL) != "" {
+		store, err := lessons.NewRedisStore(strings.TrimSpace(cfg.RedisURL))
+		if err != nil {
+			log.Printf("runtime lessons redis init: %v", err)
+		} else {
+			runtimeLessonsStore = store
+		}
+	}
 	return &Bot{
 		cfg:                      cfg,
 		api:                      api,
@@ -111,6 +122,16 @@ func New(cfg *config.Config, lm *llm.EmployeeLLM, p *persona.Loader, owner threa
 		activeBroadcastByChannel: map[string]int{},
 		gmailSender:              sender,
 		opsProxyClient:           opsClient,
+		runtimeLessons: lessons.New(lessons.Config{
+			Enabled:        cfg.LessonsEnabled,
+			LogOnly:        cfg.LessonsLogOnly,
+			AutoApply:      cfg.LessonsAutoApply,
+			MinConfidence:  cfg.LessonsMinConfidence,
+			MaxActive:      cfg.LessonsMaxActive,
+			MaxEvents:      cfg.LessonsMaxEvents,
+			TTL:            time.Duration(cfg.LessonsTTLSeconds) * time.Second,
+			MaxPromptRunes: cfg.LessonsMaxPromptRunes,
+		}, runtimeLessonsStore),
 	}
 }
 
@@ -722,6 +743,7 @@ func (b *Bot) postLLMReplyWithResult(ctx context.Context, channel, userText, mes
 	if tc := b.channelHistoryContextBlock(ctx, channel, messageTS, sourceUserID); tc != "" {
 		userPayload = tc + "\n\n" + userPayload
 	}
+	userPayload = b.prependRuntimeLessons(ctx, b.cfg.EmployeeID, userPayload)
 	priorSelf := b.latestPriorEmployeeMessageInChannel(ctx, channel, messageTS)
 	userPayload = prependRethinkCue(userPayload, userText, priorSelf)
 	userPayload = prependHostilityCue(userPayload, userText)
@@ -776,6 +798,7 @@ func (b *Bot) postLLMReplyWithResult(ctx context.Context, channel, userText, mes
 	if b.outbound != nil {
 		b.outbound.record(time.Now())
 	}
+	b.recordRuntimeLesson(ctx, "post_llm_channel", channel, "", messageTS, userText, reply)
 	return true
 }
 

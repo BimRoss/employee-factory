@@ -296,6 +296,7 @@ func (b *Bot) handleThreadMessage(ctx context.Context, channel, userID, rawText,
 	if tc != "" {
 		userText = tc + "\n\n" + userText
 	}
+	userText = b.prependRuntimeLessons(ctx, b.cfg.EmployeeID, userText)
 	priorSelf := latestPriorEmployeeMessageInThread(msgs, messageTS, cfg.EmployeeID, b.botUserID, cfg)
 	userText = prependRethinkCue(userText, rawText, priorSelf)
 	userText = prependHostilityCue(userText, rawText)
@@ -390,4 +391,5 @@ func (b *Bot) postLLMReplyInThread(ctx context.Context, channel, sourceText, use
 	if b.outbound != nil {
 		b.outbound.record(time.Now())
 	}
+	b.recordRuntimeLesson(ctx, "post_llm_thread", channel, threadTS, messageTS, sourceText, reply)
 }

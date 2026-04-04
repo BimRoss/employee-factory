@@ -121,6 +121,15 @@ type Config struct {
 	RouterAvailabilityEnabled bool
 	// RouterLogOnly keeps router classification + decision traces enabled but does not enforce suppression.
 	RouterLogOnly bool
+	// Runtime lessons capture + guarded auto-apply.
+	LessonsEnabled        bool
+	LessonsLogOnly        bool
+	LessonsAutoApply      bool
+	LessonsMinConfidence  float64
+	LessonsMaxActive      int
+	LessonsTTLSeconds     int
+	LessonsMaxEvents      int
+	LessonsMaxPromptRunes int
 
 	// Joanne email tooling (first vertical slice).
 	JoanneEmailEnabled bool
@@ -211,6 +220,14 @@ func Load() (*Config, error) {
 		LLMContextWeightWindow:                parseIntEnvMin("LLM_CONTEXT_WEIGHT_WINDOW", 3, 1),
 		RouterAvailabilityEnabled:             parseBoolEnv("ROUTER_AVAILABILITY_ENABLED", false),
 		RouterLogOnly:                         parseBoolEnv("ROUTER_LOG_ONLY", false),
+		LessonsEnabled:                        parseBoolEnv("LESSONS_ENABLED", false),
+		LessonsLogOnly:                        parseBoolEnv("LESSONS_LOG_ONLY", true),
+		LessonsAutoApply:                      parseBoolEnv("LESSONS_AUTO_APPLY", true),
+		LessonsMinConfidence:                  parseFloat64EnvClamp("LESSONS_MIN_CONFIDENCE", 0.8, 0, 1),
+		LessonsMaxActive:                      parseIntEnvMin("LESSONS_MAX_ACTIVE", 3, 1),
+		LessonsTTLSeconds:                     parseIntEnvMin("LESSONS_TTL_SEC", 604800, 60),
+		LessonsMaxEvents:                      parseIntEnvMin("LESSONS_MAX_EVENTS", 200, 10),
+		LessonsMaxPromptRunes:                 parseIntEnvMin("LESSONS_MAX_PROMPT_RUNES", 600, 64),
 		JoanneEmailEnabled:                    parseBoolEnv("JOANNE_EMAIL_ENABLED", false),
 		GoogleClientID:                        strings.TrimSpace(os.Getenv("GOOGLE_CLIENT_ID")),
 		GoogleClientSecret:                    strings.TrimSpace(os.Getenv("GOOGLE_CLIENT_SECRET")),
