@@ -135,12 +135,13 @@ type Config struct {
 	LessonsMaxPromptRunes int
 
 	// Joanne email tooling (first vertical slice).
-	JoanneEmailEnabled bool
-	GoogleClientID     string
-	GoogleClientSecret string
-	GoogleRefreshToken string
-	GoogleSenderEmail  string
-	GoogleSenderName   string
+	JoanneEmailEnabled      bool
+	JoanneGoogleDocsEnabled bool
+	GoogleClientID          string
+	GoogleClientSecret      string
+	GoogleRefreshToken      string
+	GoogleSenderEmail       string
+	GoogleSenderName        string
 
 	// Ross ops tooling (read-only kubernetes + redis through ops proxy).
 	RossOpsEnabled              bool
@@ -234,6 +235,7 @@ func Load() (*Config, error) {
 		LessonsMaxEvents:                     parseIntEnvMin("LESSONS_MAX_EVENTS", 200, 10),
 		LessonsMaxPromptRunes:                parseIntEnvMin("LESSONS_MAX_PROMPT_RUNES", 600, 64),
 		JoanneEmailEnabled:                   parseBoolEnv("JOANNE_EMAIL_ENABLED", false),
+		JoanneGoogleDocsEnabled:              parseBoolEnv("JOANNE_GOOGLE_DOCS_ENABLED", false),
 		GoogleClientID:                       strings.TrimSpace(os.Getenv("GOOGLE_CLIENT_ID")),
 		GoogleClientSecret:                   strings.TrimSpace(os.Getenv("GOOGLE_CLIENT_SECRET")),
 		GoogleRefreshToken:                   strings.TrimSpace(os.Getenv("GOOGLE_REFRESH_TOKEN")),
@@ -274,6 +276,9 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("set SLACK_APP_TOKEN or employee-prefixed _SLACK_APP_TOKEN")
 	}
 	if err := validateJoanneEmailConfig(cfg); err != nil {
+		return nil, err
+	}
+	if err := validateJoanneGoogleDocsConfig(cfg); err != nil {
 		return nil, err
 	}
 	if err := validateRossOpsConfig(cfg); err != nil {
@@ -647,6 +652,28 @@ func validateJoanneEmailConfig(cfg *Config) error {
 	}
 	if cfg.GoogleSenderEmail == "" {
 		return fmt.Errorf("set GOOGLE_SENDER_EMAIL when JOANNE_EMAIL_ENABLED=true for EMPLOYEE_ID=joanne")
+	}
+	return nil
+}
+
+func validateJoanneGoogleDocsConfig(cfg *Config) error {
+	if cfg == nil {
+		return nil
+	}
+	if !cfg.JoanneGoogleDocsEnabled {
+		return nil
+	}
+	if !strings.EqualFold(strings.TrimSpace(cfg.EmployeeID), "joanne") {
+		return nil
+	}
+	if cfg.GoogleClientID == "" {
+		return fmt.Errorf("set GOOGLE_CLIENT_ID when JOANNE_GOOGLE_DOCS_ENABLED=true for EMPLOYEE_ID=joanne")
+	}
+	if cfg.GoogleClientSecret == "" {
+		return fmt.Errorf("set GOOGLE_CLIENT_SECRET when JOANNE_GOOGLE_DOCS_ENABLED=true for EMPLOYEE_ID=joanne")
+	}
+	if cfg.GoogleRefreshToken == "" {
+		return fmt.Errorf("set GOOGLE_REFRESH_TOKEN when JOANNE_GOOGLE_DOCS_ENABLED=true for EMPLOYEE_ID=joanne")
 	}
 	return nil
 }

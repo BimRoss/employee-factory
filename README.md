@@ -4,6 +4,8 @@
 
 The repo is the source of truth for behavior—read the code and `.env.example` if you are running or extending it.
 
+OAuth scopes requested by personality runtime are tracked in [`PERSONALITY_SCOPE_MAP.md`](PERSONALITY_SCOPE_MAP.md).
+
 ## Company-channel runtime (first pass)
 
 This repo now includes a first-pass contract for "one Slack channel = one company runtime".
@@ -134,7 +136,7 @@ Phase 1 adds only ConfigMap keys; runtime Secrets stay the same.
 
 - `scripts/update-runtime-secrets.sh` syncs one employee runtime Secret from local `.env` (`EMPLOYEE_ID=alex|tim|ross|garth|joanne`).
 - `scripts/update-all-runtime-secrets.sh` syncs all five runtime Secrets in one pass.
-- Synced keys include `LLM_API_KEY`, or `OPENROUTER_API_KEY` / `OPENROUTER_KEY` (written into Secret as `LLM_API_KEY`), `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`, optional `SLACK_USER_TOKEN`, optional `LLM_MODEL`, `MULTIAGENT_BOT_USER_IDS`, Joanne Gmail keys, and Ross ops proxy keys.
+- Synced keys include `LLM_API_KEY`, or `OPENROUTER_API_KEY` / `OPENROUTER_KEY` (written into Secret as `LLM_API_KEY`), `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`, optional `SLACK_USER_TOKEN`, optional `LLM_MODEL`, `MULTIAGENT_BOT_USER_IDS`, Joanne Google tooling keys/flags, and Ross ops proxy keys.
 - `MULTIAGENT_BOT_USER_IDS` auto-resolves from each bot token via Slack `auth.test` (order from `MULTIAGENT_ORDER`, default `ross,tim,alex,garth,joanne`) unless explicitly provided.
 
 ## Ross read-only ops tooling (kubernetes + redis)
@@ -215,3 +217,45 @@ Do not use password-based auth for this path.
    - Slack confirmation from Joanne
    - Recipient inbox received message
    - Pod logs show `joanne_email: send success`
+
+## Joanne Google Docs create-doc tooling (first vertical slice)
+
+Joanne can create a Google Doc from Slack instructions and post the link back into the thread/channel.
+
+### Required env/runtime keys (Joanne only)
+
+- `JOANNE_GOOGLE_DOCS_ENABLED=true`
+- `GOOGLE_CLIENT_ID`
+- `GOOGLE_CLIENT_SECRET`
+- `GOOGLE_REFRESH_TOKEN`
+
+These are loaded from the `employee-factory-joanne-runtime` Secret.
+
+### Google setup (least privilege)
+
+1. Enable Google Docs API on your Google Cloud project.
+2. Create OAuth client credentials for the Joanne account flow.
+3. Grant scope:
+   - `https://www.googleapis.com/auth/documents`
+4. Generate/store a refresh token for the Joanne account with that scope.
+
+### Command contract (first pass)
+
+- Trigger intent: explicit asks like "create google doc", "draft google doc", or "create doc".
+- Optional explicit fields:
+  - `title: ...`
+  - `instruction: ...` (Joanne drafts body in her voice)
+  - `body: ...` (direct body override)
+
+### Cluster-first E2E runbook
+
+1. Populate `.env` with Docs keys/flags above.
+2. Sync Joanne runtime secret:
+   - `EMPLOYEE_ID=joanne ./scripts/update-runtime-secrets.sh`
+3. Restart or rollout Joanne deployment if needed:
+   - `kubectl -n employee-factory rollout restart deploy/employee-factory-joanne`
+   - `kubectl -n employee-factory rollout status deploy/employee-factory-joanne`
+4. In Slack, ask Joanne to create a doc using `instruction:` or `body:`.
+5. Verify:
+   - Slack confirmation from Joanne with docs URL
+   - Pod logs show `joanne_docs: create success`

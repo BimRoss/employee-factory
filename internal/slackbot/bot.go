@@ -11,6 +11,7 @@ import (
 
 	"github.com/bimross/employee-factory/internal/config"
 	"github.com/bimross/employee-factory/internal/gmailsender"
+	"github.com/bimross/employee-factory/internal/googledocs"
 	"github.com/bimross/employee-factory/internal/lessons"
 	"github.com/bimross/employee-factory/internal/llm"
 	"github.com/bimross/employee-factory/internal/opsproxy"
@@ -75,6 +76,7 @@ type Bot struct {
 	// generalAutoReplyLock coordinates cross-pod single-reaction behavior for plain #general messages.
 	generalAutoReplyLock *generalAutoReplyLocker
 	gmailSender          *gmailsender.Sender
+	googleDocsClient     *googledocs.Client
 	opsProxyClient       *opsproxy.Client
 	runtimeLessons       *lessons.Manager
 }
@@ -84,6 +86,7 @@ func New(cfg *config.Config, lm *llm.EmployeeLLM, p *persona.Loader, owner threa
 	api := slack.New(cfg.SlackBotToken, slack.OptionAppLevelToken(cfg.SlackAppToken))
 	window := time.Duration(cfg.SlackOutboundWindowSec) * time.Second
 	var sender *gmailsender.Sender
+	var docsClient *googledocs.Client
 	var opsClient *opsproxy.Client
 	var runtimeLessonsStore lessons.Store = lessons.NoopStore{}
 	if strings.EqualFold(strings.TrimSpace(cfg.EmployeeID), "joanne") && cfg.JoanneEmailEnabled {
@@ -92,6 +95,14 @@ func New(cfg *config.Config, lm *llm.EmployeeLLM, p *persona.Loader, owner threa
 			log.Printf("gmail sender init: %v", err)
 		} else {
 			sender = s
+		}
+	}
+	if strings.EqualFold(strings.TrimSpace(cfg.EmployeeID), "joanne") && cfg.JoanneGoogleDocsEnabled {
+		client, err := googledocs.New(cfg)
+		if err != nil {
+			log.Printf("google docs client init: %v", err)
+		} else {
+			docsClient = client
 		}
 	}
 	if strings.EqualFold(strings.TrimSpace(cfg.EmployeeID), "ross") && cfg.RossOpsEnabled {
@@ -121,6 +132,7 @@ func New(cfg *config.Config, lm *llm.EmployeeLLM, p *persona.Loader, owner threa
 		generalAutoReplyLock:     newGeneralAutoReplyLocker(strings.TrimSpace(cfg.RedisURL)),
 		activeBroadcastByChannel: map[string]int{},
 		gmailSender:              sender,
+		googleDocsClient:         docsClient,
 		opsProxyClient:           opsClient,
 		runtimeLessons: lessons.New(lessons.Config{
 			Enabled:        cfg.LessonsEnabled,
@@ -253,6 +265,9 @@ func (b *Bot) onMessage(ctx context.Context, ev *slackevents.MessageEvent) {
 	if b.tryHandleJoanneSendEmail(ctx, channel, rawText, ev.User, ev.TimeStamp, "") {
 		return
 	}
+	if b.tryHandleJoanneCreateDoc(ctx, channel, rawText, ev.User, ev.TimeStamp, "") {
+		return
+	}
 	if ts := strings.TrimSpace(ev.ThreadTimeStamp); ts != "" {
 		if b.cfg.ThreadsEnabled() {
 			log.Printf("slack_route: path=thread employee=%s channel=%s thread_ts=%s", strings.TrimSpace(b.cfg.EmployeeID), channel, ts)
@@ -364,6 +379,9 @@ func (b *Bot) onAppMention(ctx context.Context, ev *slackevents.AppMentionEvent)
 		return
 	}
 	if b.tryHandleJoanneSendEmail(ctx, channel, rawText, ev.User, ev.TimeStamp, strings.TrimSpace(ev.ThreadTimeStamp)) {
+		return
+	}
+	if b.tryHandleJoanneCreateDoc(ctx, channel, rawText, ev.User, ev.TimeStamp, strings.TrimSpace(ev.ThreadTimeStamp)) {
 		return
 	}
 	if ts := strings.TrimSpace(ev.ThreadTimeStamp); ts != "" {
