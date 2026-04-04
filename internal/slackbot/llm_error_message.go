@@ -28,6 +28,9 @@ func llmErrorUserMessage(err error) string {
 	if errors.Is(err, context.Canceled) {
 		return "The model request was interrupted. Please retry."
 	}
+	if llm.IsProviderTimeoutLLMError(err) {
+		return humanTimeoutMessage("provider_timeout")
+	}
 	if status, ok := llmHTTPStatus(err); ok {
 		switch status {
 		case 401, 403:

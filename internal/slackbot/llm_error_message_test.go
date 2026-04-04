@@ -64,6 +64,16 @@ func TestLLMErrorUserMessage(t *testing.T) {
 				"one more ping",
 			},
 		},
+		{
+			name: "provider timeout string",
+			err:  errors.New(`Post "https://openrouter.ai/api/v1/chat/completions": context deadline exceeded`),
+			wantAny: []string{
+				"sorry",
+				"try me again",
+				"one more time",
+				"one more ping",
+			},
+		},
 	}
 
 	for _, tc := range tests {

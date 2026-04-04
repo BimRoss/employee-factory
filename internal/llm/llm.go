@@ -76,7 +76,7 @@ func (e *EmployeeLLM) Reply(ctx context.Context, personaBody, slackSystemSuffix,
 	var lastErr error
 	for attempt := 0; attempt < maxAttempts; attempt++ {
 		if attempt > 0 {
-			if lastErr == nil || !IsTransientLLMError(lastErr) {
+			if lastErr == nil || !IsFallbackEligibleLLMError(lastErr) {
 				break
 			}
 			delay := e.retryBackoffMS * (1 << (attempt - 1))
@@ -88,15 +88,25 @@ func (e *EmployeeLLM) Reply(ctx context.Context, personaBody, slackSystemSuffix,
 				return "", ctx.Err()
 			case <-time.After(time.Duration(delay) * time.Millisecond):
 			}
-			log.Printf("llm: retrying primary completion after transient error (attempt %d/%d)", attempt+1, maxAttempts)
+			log.Printf("llm: retrying primary completion after retryable error (attempt %d/%d)", attempt+1, maxAttempts)
 		}
 
-		resp, err := e.primary.CreateChatCompletion(ctx, req)
+		attemptCtx, cancelAttempt := primaryAttemptContext(ctx, maxAttempts-attempt)
+		resp, err := e.primary.CreateChatCompletion(attemptCtx, req)
+		cancelAttempt()
 		if err == nil {
 			return chatCompletionText(resp), nil
 		}
 		lastErr = err
-		if !IsTransientLLMError(err) {
+		log.Printf(
+			"llm: primary completion failed attempt=%d/%d retryable=%t timeout_like=%t err=%v",
+			attempt+1,
+			maxAttempts,
+			IsFallbackEligibleLLMError(err),
+			IsProviderTimeoutLLMError(err),
+			err,
+		)
+		if !IsFallbackEligibleLLMError(err) {
 			break
 		}
 	}
@@ -126,6 +136,35 @@ func (e *EmployeeLLM) Reply(ctx context.Context, personaBody, slackSystemSuffix,
 		return "", lastErr
 	}
 	return "", nil
+}
+
+// primaryAttemptContext reserves budget for retries by slicing an outer deadline into smaller
+// per-attempt windows. If no deadline exists, keep the original context untouched.
+func primaryAttemptContext(ctx context.Context, attemptsRemaining int) (context.Context, context.CancelFunc) {
+	if attemptsRemaining <= 1 {
+		return ctx, func() {}
+	}
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		return ctx, func() {}
+	}
+	remaining := time.Until(deadline)
+	// If caller budget is already exhausted or tiny, avoid creating another nested timeout.
+	if remaining <= 2*time.Second {
+		return ctx, func() {}
+	}
+	slice := remaining / time.Duration(attemptsRemaining)
+	// Keep individual attempts bounded so one slow upstream response does not starve retries.
+	if slice > 15*time.Second {
+		slice = 15 * time.Second
+	}
+	if slice < 4*time.Second {
+		slice = 4 * time.Second
+	}
+	if slice >= remaining {
+		return ctx, func() {}
+	}
+	return context.WithTimeout(ctx, slice)
 }
 
 func chatCompletionText(resp openai.ChatCompletionResponse) string {
