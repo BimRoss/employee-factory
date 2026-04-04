@@ -150,9 +150,9 @@ func TestGeneralAutoReactionFailoverShouldPost(t *testing.T) {
 func TestShouldSkipGeneralAutoReply_ClosureIntent(t *testing.T) {
 	cases := []string{
 		"I should be good thanks garth",
-		"all good thanks",
+		"all good for now",
 		"No problem",
-		"that helps, appreciate it",
+		"done for now",
 	}
 	for _, tc := range cases {
 		skip, reason := shouldSkipGeneralAutoReply(tc)
@@ -161,6 +161,20 @@ func TestShouldSkipGeneralAutoReply_ClosureIntent(t *testing.T) {
 		}
 		if reason != "closure_intent" {
 			t.Fatalf("expected closure_intent reason for %q, got %q", tc, reason)
+		}
+	}
+}
+
+func TestShouldSkipGeneralAutoReply_GratitudeStillEligible(t *testing.T) {
+	cases := []string{
+		"Thanks guys",
+		"thank you team",
+		"appreciate it",
+	}
+	for _, tc := range cases {
+		skip, reason := shouldSkipGeneralAutoReply(tc)
+		if skip {
+			t.Fatalf("did not expect skip for gratitude text: %q reason=%q", tc, reason)
 		}
 	}
 }

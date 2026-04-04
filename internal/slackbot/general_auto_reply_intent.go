@@ -15,8 +15,6 @@ var generalAutoReplyAskPhrases = []string{
 }
 
 var generalAutoReplyClosurePhrases = []string{
-	"thanks",
-	"thank you",
 	"all good",
 	"i am good",
 	"i'm good",
@@ -30,8 +28,6 @@ var generalAutoReplyClosurePhrases = []string{
 	"sounds good",
 	"that helps",
 	"this helps",
-	"good thanks",
-	"appreciate it",
 	"i should be good",
 	"should be good",
 	"done for now",
