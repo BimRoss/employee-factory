@@ -132,8 +132,20 @@ func (b *Bot) handleEvent(ctx context.Context, evt socketmode.Event) {
 	switch evt.Type {
 	case socketmode.EventTypeConnecting:
 		log.Printf("slack socketmode connecting")
+	case socketmode.EventTypeConnected:
+		log.Printf("slack socketmode connected")
+	case socketmode.EventTypeDisconnect:
+		log.Printf("slack socketmode disconnect: %v", evt.Data)
 	case socketmode.EventTypeConnectionError:
 		log.Printf("slack socketmode connection error: %v", evt.Data)
+	case socketmode.EventTypeInvalidAuth:
+		log.Printf("slack socketmode invalid auth: %v", evt.Data)
+	case socketmode.EventTypeIncomingError:
+		log.Printf("slack socketmode incoming error: %v", evt.Data)
+	case socketmode.EventTypeErrorWriteFailed:
+		log.Printf("slack socketmode write error: %v", evt.Data)
+	case socketmode.EventTypeErrorBadMessage:
+		log.Printf("slack socketmode bad message: %v", evt.Data)
 	case socketmode.EventTypeEventsAPI:
 		eventsAPI, ok := evt.Data.(slackevents.EventsAPIEvent)
 		if !ok {

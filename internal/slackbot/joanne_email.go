@@ -6,6 +6,7 @@ import (
 	"log"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/bimross/employee-factory/internal/emailaction"
 	"github.com/bimross/employee-factory/internal/gmailsender"
@@ -32,19 +33,27 @@ func (b *Bot) tryHandleJoanneSendEmail(ctx context.Context, channel, rawText, re
 	if !matched {
 		return false
 	}
-	if err != nil {
-		b.postJoanneEmailStatus(ctx, channel, threadTS, "I can send that email once you give me content via `instruction:` or `body:`.")
-		return true
+	go b.handleJoanneSendEmail(ctx, channel, requestUserID, messageTS, threadTS, action, err)
+	return true
+}
+
+func (b *Bot) handleJoanneSendEmail(parent context.Context, channel, requestUserID, messageTS, threadTS string, action emailaction.SendEmailAction, parseErr error) {
+	commandCtx, cancel := context.WithTimeout(parent, 45*time.Second)
+	defer cancel()
+
+	if parseErr != nil {
+		b.postJoanneEmailStatus(commandCtx, channel, threadTS, "I can send that email once you give me content via `instruction:` or `body:`.")
+		return
 	}
 	if b.gmailSender == nil {
-		b.postJoanneEmailStatus(ctx, channel, threadTS, "Email tooling is enabled but Gmail auth is not ready in runtime config yet.")
-		return true
+		b.postJoanneEmailStatus(commandCtx, channel, threadTS, "Email tooling is enabled but Gmail auth is not ready in runtime config yet.")
+		return
 	}
 
-	to, source, err := b.resolveJoanneEmailRecipient(ctx, action.To, requestUserID)
+	to, source, err := b.resolveJoanneEmailRecipient(commandCtx, action.To, requestUserID)
 	if err != nil {
-		b.postJoanneEmailStatus(ctx, channel, threadTS, "I couldn't resolve the recipient email from this request. Add `to: name@example.com` and retry.")
-		return true
+		b.postJoanneEmailStatus(commandCtx, channel, threadTS, "I couldn't resolve the recipient email from this request. Add `to: name@example.com` and retry.")
+		return
 	}
 
 	subject := strings.TrimSpace(action.Subject)
@@ -54,28 +63,27 @@ func (b *Bot) tryHandleJoanneSendEmail(ctx context.Context, channel, rawText, re
 
 	body := strings.TrimSpace(action.BodyText)
 	if body == "" {
-		body, err = b.generateJoanneEmailBody(ctx, action.BodyInstruction, to)
+		body, err = b.generateJoanneEmailBody(commandCtx, action.BodyInstruction, to)
 		if err != nil {
 			log.Printf("joanne_email: body generation failed message_ts=%s err=%v", strings.TrimSpace(messageTS), err)
-			b.postJoanneEmailStatus(ctx, channel, threadTS, "I hit a drafting error while composing that email. Please retry with `body:` text.")
-			return true
+			b.postJoanneEmailStatus(commandCtx, channel, threadTS, "I hit a drafting error while composing that email. Please retry with `body:` text.")
+			return
 		}
 	}
 
-	err = b.gmailSender.Send(ctx, gmailsender.SendInput{
+	err = b.gmailSender.Send(commandCtx, gmailsender.SendInput{
 		To:      to,
 		Subject: subject,
 		Body:    body,
 	})
 	if err != nil {
 		log.Printf("joanne_email: send failed message_ts=%s recipient_source=%s err=%v", strings.TrimSpace(messageTS), source, err)
-		b.postJoanneEmailStatus(ctx, channel, threadTS, "I couldn't send the Gmail message. Please check OAuth/runtime setup and retry.")
-		return true
+		b.postJoanneEmailStatus(commandCtx, channel, threadTS, "I couldn't send the Gmail message. Please check OAuth/runtime setup and retry.")
+		return
 	}
 
 	log.Printf("joanne_email: send success message_ts=%s recipient_source=%s", strings.TrimSpace(messageTS), source)
-	b.postJoanneEmailStatus(ctx, channel, threadTS, fmt.Sprintf("Email sent to `%s` from `%s`.", to, b.cfg.GoogleSenderEmail))
-	return true
+	b.postJoanneEmailStatus(commandCtx, channel, threadTS, fmt.Sprintf("Email sent to `%s` from `%s`.", to, b.cfg.GoogleSenderEmail))
 }
 
 func (b *Bot) resolveJoanneEmailRecipient(ctx context.Context, explicitTo, requestUserID string) (email string, source string, err error) {
@@ -131,11 +139,13 @@ func (b *Bot) generateJoanneEmailBody(ctx context.Context, instruction, recipien
 }
 
 func (b *Bot) postJoanneEmailStatus(ctx context.Context, channel, threadTS, text string) {
+	postCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
+	defer cancel()
 	opts := []slack.MsgOption{slack.MsgOptionText(strings.TrimSpace(text), false)}
 	if strings.TrimSpace(threadTS) != "" {
 		opts = append(opts, slack.MsgOptionTS(strings.TrimSpace(threadTS)))
 	}
-	if _, _, err := b.api.PostMessageContext(ctx, channel, opts...); err != nil {
+	if _, _, err := b.api.PostMessageContext(postCtx, channel, opts...); err != nil {
 		log.Printf("joanne_email: slack status post failed: %v", err)
 	}
 }

@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/bimross/employee-factory/internal/config"
 	"golang.org/x/oauth2"
@@ -44,6 +45,7 @@ func New(cfg *config.Config) (*Sender, error) {
 	}
 	tok := &oauth2.Token{RefreshToken: strings.TrimSpace(cfg.GoogleRefreshToken)}
 	client := oauthCfg.Client(context.Background(), tok)
+	client.Timeout = 20 * time.Second
 	return &Sender{
 		client:      client,
 		senderEmail: strings.TrimSpace(cfg.GoogleSenderEmail),
