@@ -94,3 +94,17 @@ func TestResolveJoanneEmailRecipient_GrantFallback(t *testing.T) {
 		t.Fatalf("source mismatch: %q", source)
 	}
 }
+
+func TestResolveJoanneEmailRecipient_GrantFallbackWhenExplicitInvalid(t *testing.T) {
+	b := &Bot{cfg: &config.Config{ChatAllowedUserID: "UCEO"}}
+	got, source, err := b.resolveJoanneEmailRecipient(context.TODO(), "Erika", "UCEO")
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if got != grantFallbackRecipientEmail {
+		t.Fatalf("recipient mismatch: %q", got)
+	}
+	if source != "grant_user_fallback_invalid_explicit" {
+		t.Fatalf("source mismatch: %q", source)
+	}
+}

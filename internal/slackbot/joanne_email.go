@@ -219,6 +219,9 @@ func (b *Bot) resolveJoanneEmailRecipient(ctx context.Context, explicitTo, reque
 		}
 		cleanTo := normalizeEmailAddress(to)
 		if !isValidEmail(cleanTo) {
+			if b.shouldUseGrantRecipientFallback(requestUserID, "") {
+				return grantFallbackRecipientEmail, "grant_user_fallback_invalid_explicit", nil
+			}
 			return "", "", fmt.Errorf("invalid explicit recipient")
 		}
 		return cleanTo, "explicit", nil
