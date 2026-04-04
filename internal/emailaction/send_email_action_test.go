@@ -61,3 +61,57 @@ func TestParseSendEmailAction_RequiresBody(t *testing.T) {
 		t.Fatalf("expected validation error")
 	}
 }
+
+func TestParseSendEmailAction_EmailMeWithTitleAndBody(t *testing.T) {
+	raw := "please email me, title: Reminder, body: Tell your wife you love her."
+	got, matched, err := ParseSendEmailAction(raw)
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if !matched {
+		t.Fatalf("expected match")
+	}
+	if got.Subject != "Reminder" {
+		t.Fatalf("title alias should map to subject, got %q", got.Subject)
+	}
+	if got.BodyText != "Tell your wife you love her." {
+		t.Fatalf("body text mismatch: %q", got.BodyText)
+	}
+}
+
+func TestParseSendEmailAction_NewlineThreadStyle(t *testing.T) {
+	raw := "email me\nsubject: Reminder\nbody: Please remember this."
+	got, matched, err := ParseSendEmailAction(raw)
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if !matched {
+		t.Fatalf("expected match")
+	}
+	if got.Subject != "Reminder" {
+		t.Fatalf("subject mismatch: %q", got.Subject)
+	}
+	if got.BodyText != "Please remember this." {
+		t.Fatalf("body mismatch: %q", got.BodyText)
+	}
+}
+
+func TestParseSendEmailAction_PleaseEmailWithExplicitRecipient(t *testing.T) {
+	raw := "please email grant@bimross.com, title: Reminder, body: You got this."
+	got, matched, err := ParseSendEmailAction(raw)
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if !matched {
+		t.Fatalf("expected match")
+	}
+	if got.To != "grant@bimross.com" {
+		t.Fatalf("to mismatch: %q", got.To)
+	}
+	if got.Subject != "Reminder" {
+		t.Fatalf("subject mismatch: %q", got.Subject)
+	}
+	if got.BodyText != "You got this." {
+		t.Fatalf("body mismatch: %q", got.BodyText)
+	}
+}

@@ -10,6 +10,8 @@ const IntentSendEmail = "send_email"
 
 var (
 	reEmail = regexp.MustCompile(`(?i)\b[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}\b`)
+	reTitle = regexp.MustCompile(`(?i)\b(?:subject|title)\s*:\s*([^;\n,]+)`)
+	reBody  = regexp.MustCompile(`(?i)\b(?:body)\s*:\s*([^;\n]+)`)
 )
 
 // SendEmailAction is the first typed action contract for Joanne email tooling.
@@ -46,7 +48,7 @@ func ParseSendEmailAction(raw string) (SendEmailAction, bool, error) {
 		switch key {
 		case "to":
 			action.To = strings.TrimSpace(val)
-		case "subject":
+		case "subject", "title":
 			action.Subject = strings.TrimSpace(val)
 		case "body":
 			action.BodyText = strings.TrimSpace(val)
@@ -60,6 +62,16 @@ func ParseSendEmailAction(raw string) (SendEmailAction, bool, error) {
 	if action.To == "" {
 		if m := reEmail.FindString(text); strings.TrimSpace(m) != "" {
 			action.To = strings.TrimSpace(m)
+		}
+	}
+	if action.Subject == "" {
+		if m := reTitle.FindStringSubmatch(text); len(m) > 1 {
+			action.Subject = strings.TrimSpace(strings.Trim(m[1], `"'`))
+		}
+	}
+	if action.BodyText == "" {
+		if m := reBody.FindStringSubmatch(text); len(m) > 1 {
+			action.BodyText = strings.TrimSpace(strings.Trim(m[1], `"'`))
 		}
 	}
 
@@ -79,11 +91,17 @@ func looksLikeSendEmailIntent(lower string) bool {
 	switch {
 	case strings.Contains(lower, "send email"):
 		return true
+	case strings.Contains(lower, "email me"):
+		return true
+	case strings.Contains(lower, "please email"):
+		return true
 	case strings.HasPrefix(lower, "email "):
 		return true
 	case strings.Contains(lower, "draft email"):
 		return true
 	case strings.Contains(lower, "send an email"):
+		return true
+	case strings.Contains(lower, "email ") && (strings.Contains(lower, "body:") || strings.Contains(lower, "title:") || strings.Contains(lower, "subject:")):
 		return true
 	default:
 		return false
@@ -118,7 +136,7 @@ func parseKeyValueSegment(seg string) (key, val string, ok bool) {
 		return "", "", false
 	}
 	switch k {
-	case "to", "subject", "body", "instruction", "body_instruction":
+	case "to", "subject", "title", "body", "instruction", "body_instruction":
 		return k, strings.Trim(v, `"'`), true
 	default:
 		return "", "", false

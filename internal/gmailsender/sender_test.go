@@ -29,3 +29,13 @@ func TestBuildRawMessage_NoSenderName(t *testing.T) {
 		t.Fatalf("missing plain From header: %q", msg)
 	}
 }
+
+func TestParseSendResultJSON(t *testing.T) {
+	got := parseSendResultJSON([]byte(`{"id":"abc123","threadId":"th999"}`))
+	if got.MessageID != "abc123" {
+		t.Fatalf("message id mismatch: %q", got.MessageID)
+	}
+	if got.ThreadID != "th999" {
+		t.Fatalf("thread id mismatch: %q", got.ThreadID)
+	}
+}

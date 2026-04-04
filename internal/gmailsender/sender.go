@@ -24,6 +24,11 @@ type Sender struct {
 	senderName  string
 }
 
+type SendResult struct {
+	MessageID string
+	ThreadID  string
+}
+
 type SendInput struct {
 	To      string
 	Subject string
@@ -53,44 +58,45 @@ func New(cfg *config.Config) (*Sender, error) {
 	}, nil
 }
 
-func (s *Sender) Send(ctx context.Context, in SendInput) error {
+func (s *Sender) Send(ctx context.Context, in SendInput) (SendResult, error) {
 	if s == nil || s.client == nil {
-		return fmt.Errorf("gmail sender is not initialized")
+		return SendResult{}, fmt.Errorf("gmail sender is not initialized")
 	}
 	to := strings.TrimSpace(in.To)
 	subject := strings.TrimSpace(in.Subject)
 	body := strings.TrimSpace(in.Body)
 	if to == "" {
-		return fmt.Errorf("missing recipient email")
+		return SendResult{}, fmt.Errorf("missing recipient email")
 	}
 	if subject == "" {
 		subject = "Message from Joanne"
 	}
 	if body == "" {
-		return fmt.Errorf("missing email body")
+		return SendResult{}, fmt.Errorf("missing email body")
 	}
 
 	raw := buildRawMessage(s.senderName, s.senderEmail, to, subject, body)
 	payload := map[string]string{"raw": raw}
 	b, err := json.Marshal(payload)
 	if err != nil {
-		return err
+		return SendResult{}, err
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, gmailSendEndpoint, bytes.NewReader(b))
 	if err != nil {
-		return err
+		return SendResult{}, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := s.client.Do(req)
 	if err != nil {
-		return err
+		return SendResult{}, err
 	}
 	defer resp.Body.Close()
+	rb, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 	if resp.StatusCode >= 300 {
-		rb, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return fmt.Errorf("gmail send failed: status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(rb)))
+		return SendResult{}, fmt.Errorf("gmail send failed: status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(rb)))
 	}
-	return nil
+	result := parseSendResultJSON(rb)
+	return result, nil
 }
 
 func buildRawMessage(fromName, fromEmail, to, subject, body string) string {
@@ -120,4 +126,21 @@ func resolveSenderName(cfg *config.Config) string {
 		return "Joanne"
 	}
 	return ""
+}
+
+func parseSendResultJSON(body []byte) SendResult {
+	if len(body) == 0 {
+		return SendResult{}
+	}
+	var payload struct {
+		ID       string `json:"id"`
+		ThreadID string `json:"threadId"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return SendResult{}
+	}
+	return SendResult{
+		MessageID: strings.TrimSpace(payload.ID),
+		ThreadID:  strings.TrimSpace(payload.ThreadID),
+	}
 }
