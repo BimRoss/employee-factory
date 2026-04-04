@@ -79,6 +79,8 @@ type Bot struct {
 	googleDocsClient     *googledocs.Client
 	opsProxyClient       *opsproxy.Client
 	runtimeLessons       *lessons.Manager
+	joanneEmailPendingMu sync.Mutex
+	joanneEmailPending   map[string]joannePendingEmail
 }
 
 // New constructs a Socket Mode bot. owner may be nil (human-root owner is inferred from thread history).
@@ -134,6 +136,7 @@ func New(cfg *config.Config, lm *llm.EmployeeLLM, p *persona.Loader, owner threa
 		gmailSender:              sender,
 		googleDocsClient:         docsClient,
 		opsProxyClient:           opsClient,
+		joanneEmailPending:       map[string]joannePendingEmail{},
 		runtimeLessons: lessons.New(lessons.Config{
 			Enabled:        cfg.LessonsEnabled,
 			LogOnly:        cfg.LessonsLogOnly,

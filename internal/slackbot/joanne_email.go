@@ -16,6 +16,18 @@ import (
 var reLikelyEmail = regexp.MustCompile(`(?i)\b[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}\b`)
 
 const grantFallbackRecipientEmail = "grant@bimross.com"
+const joanneEmailPendingTTL = 20 * time.Minute
+
+type joannePendingEmail struct {
+	To           string
+	Subject      string
+	Body         string
+	Goal         string
+	ThreadTS     string
+	ActionSource string
+	CreatedAt    time.Time
+	ExpiresAt    time.Time
+}
 
 type joanneEmailActionExtract struct {
 	Intent          string  `json:"intent"`
@@ -83,6 +95,9 @@ func (b *Bot) tryHandleJoanneSendEmail(ctx context.Context, channel, rawText, re
 	cmdText := strings.TrimSpace(rawText)
 	if b.botUserID != "" {
 		cmdText = strings.TrimSpace(strings.ReplaceAll(cmdText, "<@"+b.botUserID+">", ""))
+	}
+	if b.tryHandleJoanneEmailConfirmation(ctx, channel, requestUserID, cmdText, threadTS, messageTS) {
+		return true
 	}
 
 	extract, extractErr := b.extractJoanneEmailAction(ctx, cmdText)
@@ -163,18 +178,20 @@ func (b *Bot) handleJoanneSendEmail(parent context.Context, channel, requestUser
 	commandCtx, cancel := context.WithTimeout(parent, 45*time.Second)
 	defer cancel()
 
-	if parseErr != nil {
-		b.postJoanneEmailStatus(commandCtx, channel, threadTS, "I can send that email once you give me content via `instruction:` or `body:`.")
-		return
-	}
 	if b.gmailSender == nil {
 		b.postJoanneEmailStatus(commandCtx, channel, threadTS, "Email tooling is enabled but Gmail auth is not ready in runtime config yet.")
+		return
+	}
+	missingRecipient := strings.TrimSpace(action.To) == ""
+	missingGoal := parseErr != nil || (strings.TrimSpace(action.BodyText) == "" && strings.TrimSpace(action.BodyInstruction) == "")
+	if missingRecipient || missingGoal {
+		b.postJoanneEmailStatus(commandCtx, channel, threadTS, b.buildJoanneEmailMissingInfoPrompt(missingRecipient, missingGoal))
 		return
 	}
 
 	to, recipientSource, err := b.resolveJoanneEmailRecipient(commandCtx, action.To, requestUserID)
 	if err != nil {
-		b.postJoanneEmailStatus(commandCtx, channel, threadTS, "I couldn't resolve the recipient email from this request. Add `to: name@example.com` and retry.")
+		b.postJoanneEmailStatus(commandCtx, channel, threadTS, "I couldn't confirm the recipient address yet. Who should receive this email? Please share a direct email address.")
 		return
 	}
 
@@ -193,26 +210,60 @@ func (b *Bot) handleJoanneSendEmail(parent context.Context, channel, requestUser
 		}
 	}
 
-	result, err := b.gmailSender.Send(commandCtx, gmailsender.SendInput{
-		To:      to,
-		Subject: subject,
-		Body:    body,
+	goal := deriveJoanneEmailGoal(action, body)
+	b.setJoannePendingEmail(channel, requestUserID, threadTS, joannePendingEmail{
+		To:           to,
+		Subject:      subject,
+		Body:         body,
+		Goal:         goal,
+		ThreadTS:     strings.TrimSpace(threadTS),
+		ActionSource: actionSource + "/" + recipientSource,
+		CreatedAt:    time.Now().UTC(),
+		ExpiresAt:    time.Now().UTC().Add(joanneEmailPendingTTL),
+	})
+	b.postJoanneEmailStatus(commandCtx, channel, threadTS, buildJoanneEmailConfirmationPrompt(to, subject, goal))
+}
+
+func (b *Bot) tryHandleJoanneEmailConfirmation(ctx context.Context, channel, requestUserID, cmdText, threadTS, messageTS string) bool {
+	pending, ok := b.getJoannePendingEmail(channel, requestUserID, threadTS)
+	if !ok {
+		return false
+	}
+	text := strings.TrimSpace(cmdText)
+	if isJoanneEmailCancelText(text) {
+		b.clearJoannePendingEmail(channel, requestUserID, threadTS)
+		b.postJoanneEmailStatus(ctx, channel, pending.ThreadTS, "Stopped. I canceled that queued email.")
+		return true
+	}
+	if !isJoanneEmailConfirmText(text) {
+		return false
+	}
+	if b.gmailSender == nil {
+		b.postJoanneEmailStatus(ctx, channel, pending.ThreadTS, "Email tooling is enabled but Gmail auth is not ready in runtime config yet.")
+		return true
+	}
+	sendCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
+	defer cancel()
+	result, err := b.gmailSender.Send(sendCtx, gmailsender.SendInput{
+		To:      pending.To,
+		Subject: pending.Subject,
+		Body:    pending.Body,
 	})
 	if err != nil {
-		log.Printf("joanne_email: send failed message_ts=%s action_source=%s recipient_source=%s err=%v", strings.TrimSpace(messageTS), actionSource, recipientSource, err)
-		b.postJoanneEmailStatus(commandCtx, channel, threadTS, "I couldn't send the Gmail message. Please check OAuth/runtime setup and retry.")
-		return
+		log.Printf("joanne_email: confirm send failed message_ts=%s action_source=%s err=%v", strings.TrimSpace(messageTS), pending.ActionSource, err)
+		b.postJoanneEmailStatus(sendCtx, channel, pending.ThreadTS, "I couldn't send that Gmail message yet. Reply `confirm send` to retry, or `cancel` to stop.")
+		return true
 	}
-
+	b.clearJoannePendingEmail(channel, requestUserID, threadTS)
 	log.Printf(
-		"joanne_email: send success message_ts=%s action_source=%s recipient_source=%s message_id=%s thread_id=%s",
+		"joanne_email: confirm send success message_ts=%s action_source=%s message_id=%s thread_id=%s",
 		strings.TrimSpace(messageTS),
-		actionSource,
-		recipientSource,
+		pending.ActionSource,
 		strings.TrimSpace(result.MessageID),
 		strings.TrimSpace(result.ThreadID),
 	)
-	b.postJoanneEmailStatus(commandCtx, channel, threadTS, fmt.Sprintf("Email sent to `%s` from `%s`.", to, b.cfg.GoogleSenderEmail))
+	b.postJoanneEmailStatus(sendCtx, channel, pending.ThreadTS, fmt.Sprintf("Email sent to `%s` from `%s`.", pending.To, b.cfg.GoogleSenderEmail))
+	return true
 }
 
 func (b *Bot) resolveJoanneEmailRecipient(ctx context.Context, explicitTo, requestUserID string) (email string, source string, err error) {
@@ -331,4 +382,106 @@ func normalizeEmailAddress(raw string) string {
 		return strings.TrimSpace(m)
 	}
 	return strings.TrimSpace(strings.Trim(s, ">,;"))
+}
+
+func (b *Bot) buildJoanneEmailMissingInfoPrompt(missingRecipient, missingGoal bool) string {
+	if missingRecipient && missingGoal {
+		return "I can send that. Before I do, I still need two things: who should receive it, and what outcome you want from the email. Share it naturally, for example: `send to grant@bimross.com and the goal is confirming Monday at 10am`."
+	}
+	if missingRecipient {
+		return "I can draft that now. Who should receive this email? Please share the recipient address."
+	}
+	return "I have the recipient. What is the goal of this email so I can draft the right message?"
+}
+
+func buildJoanneEmailConfirmationPrompt(to, subject, goal string) string {
+	return fmt.Sprintf(
+		"I have everything I need. Before I send, please confirm this looks right:\n- Recipient: `%s`\n- Goal: %s\n- Subject: %s\n\nReply `confirm send` to send it, or `cancel` to stop.",
+		strings.TrimSpace(to),
+		strings.TrimSpace(goal),
+		strings.TrimSpace(subject),
+	)
+}
+
+func deriveJoanneEmailGoal(action emailaction.SendEmailAction, body string) string {
+	if goal := strings.TrimSpace(action.BodyInstruction); goal != "" {
+		return goal
+	}
+	body = strings.TrimSpace(body)
+	if body == "" {
+		body = strings.TrimSpace(action.BodyText)
+	}
+	if body == "" {
+		return "Draft and send the requested message."
+	}
+	if len(body) > 120 {
+		return body[:117] + "..."
+	}
+	return body
+}
+
+func isJoanneEmailConfirmText(v string) bool {
+	text := strings.TrimSpace(strings.ToLower(v))
+	switch text {
+	case "confirm", "confirm send", "send now":
+		return true
+	default:
+		return false
+	}
+}
+
+func isJoanneEmailCancelText(v string) bool {
+	text := strings.TrimSpace(strings.ToLower(v))
+	switch text {
+	case "cancel", "cancel send", "stop":
+		return true
+	default:
+		return false
+	}
+}
+
+func joannePendingKey(channel, requestUserID, threadTS string) string {
+	return strings.TrimSpace(channel) + "|" + strings.TrimSpace(requestUserID) + "|" + strings.TrimSpace(threadTS)
+}
+
+func (b *Bot) setJoannePendingEmail(channel, requestUserID, threadTS string, pending joannePendingEmail) {
+	if b == nil {
+		return
+	}
+	key := joannePendingKey(channel, requestUserID, threadTS)
+	b.joanneEmailPendingMu.Lock()
+	defer b.joanneEmailPendingMu.Unlock()
+	if b.joanneEmailPending == nil {
+		b.joanneEmailPending = map[string]joannePendingEmail{}
+	}
+	b.joanneEmailPending[key] = pending
+}
+
+func (b *Bot) getJoannePendingEmail(channel, requestUserID, threadTS string) (joannePendingEmail, bool) {
+	if b == nil {
+		return joannePendingEmail{}, false
+	}
+	key := joannePendingKey(channel, requestUserID, threadTS)
+	now := time.Now().UTC()
+	b.joanneEmailPendingMu.Lock()
+	defer b.joanneEmailPendingMu.Unlock()
+	pending, ok := b.joanneEmailPending[key]
+	if !ok {
+		return joannePendingEmail{}, false
+	}
+	if !pending.ExpiresAt.IsZero() && pending.ExpiresAt.Before(now) {
+		delete(b.joanneEmailPending, key)
+		return joannePendingEmail{}, false
+	}
+	return pending, true
+}
+
+func (b *Bot) clearJoannePendingEmail(channel, requestUserID, threadTS string) {
+	if b == nil {
+		return
+	}
+	key := joannePendingKey(channel, requestUserID, threadTS)
+	b.joanneEmailPendingMu.Lock()
+	defer b.joanneEmailPendingMu.Unlock()
+	delete(b.joanneEmailPending, key)
 }

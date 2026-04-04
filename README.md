@@ -197,12 +197,18 @@ Do not use password-based auth for this path.
 ### Command contract (first pass)
 
 - Trigger intent: message includes "send email" / "send an email" / "draft email".
+- Joanne asks in natural language for any missing required info before sending.
+- Required details before send:
+  - recipient (who should receive the email)
+  - goal (what outcome the email should achieve)
 - Optional explicit fields:
   - `to: name@example.com`
   - `subject: ...`
   - `instruction: ...` (Joanne drafts body in her voice)
   - `body: ...` (direct body override)
-- If `to` is omitted, recipient defaults to the requesting Slack user's profile email (`users.info`).
+- Once details are complete, Joanne posts a short summary and requires explicit confirmation before sending.
+  - `confirm send` (send now)
+  - `cancel` (stop queued send)
 
 ### Cluster-first E2E runbook
 

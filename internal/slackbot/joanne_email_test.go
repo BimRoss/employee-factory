@@ -2,7 +2,9 @@ package slackbot
 
 import (
 	"context"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/bimross/employee-factory/internal/config"
 	"github.com/bimross/employee-factory/internal/emailaction"
@@ -106,5 +108,107 @@ func TestResolveJoanneEmailRecipient_GrantFallbackWhenExplicitInvalid(t *testing
 	}
 	if source != "grant_user_fallback_invalid_explicit" {
 		t.Fatalf("source mismatch: %q", source)
+	}
+}
+
+func TestBuildJoanneEmailMissingInfoPrompt(t *testing.T) {
+	b := &Bot{}
+	gotBoth := b.buildJoanneEmailMissingInfoPrompt(true, true)
+	if !strings.Contains(strings.ToLower(gotBoth), "who should receive") {
+		t.Fatalf("expected recipient guidance, got %q", gotBoth)
+	}
+	if !strings.Contains(strings.ToLower(gotBoth), "outcome") {
+		t.Fatalf("expected goal guidance, got %q", gotBoth)
+	}
+
+	gotRecipient := b.buildJoanneEmailMissingInfoPrompt(true, false)
+	if !strings.Contains(strings.ToLower(gotRecipient), "recipient") {
+		t.Fatalf("expected recipient-only prompt, got %q", gotRecipient)
+	}
+
+	gotGoal := b.buildJoanneEmailMissingInfoPrompt(false, true)
+	if !strings.Contains(strings.ToLower(gotGoal), "goal") {
+		t.Fatalf("expected goal-only prompt, got %q", gotGoal)
+	}
+}
+
+func TestBuildJoanneEmailConfirmationPrompt(t *testing.T) {
+	got := buildJoanneEmailConfirmationPrompt("grant@bimross.com", "Quick follow-up", "Confirm next-step timing")
+	if !strings.Contains(got, "grant@bimross.com") {
+		t.Fatalf("expected recipient in summary: %q", got)
+	}
+	if !strings.Contains(got, "Confirm next-step timing") {
+		t.Fatalf("expected goal in summary: %q", got)
+	}
+	if !strings.Contains(got, "confirm send") {
+		t.Fatalf("expected confirm instruction in summary: %q", got)
+	}
+}
+
+func TestDeriveJoanneEmailGoal(t *testing.T) {
+	goal := deriveJoanneEmailGoal(emailaction.SendEmailAction{
+		BodyInstruction: "Ask for final approval by EOD.",
+	}, "")
+	if goal != "Ask for final approval by EOD." {
+		t.Fatalf("unexpected goal from instruction: %q", goal)
+	}
+
+	bodyGoal := deriveJoanneEmailGoal(emailaction.SendEmailAction{
+		BodyText: "Hi team, please confirm the rollout plan by 3pm. Thanks.",
+	}, "")
+	if !strings.Contains(bodyGoal, "rollout plan") {
+		t.Fatalf("unexpected goal from body text: %q", bodyGoal)
+	}
+}
+
+func TestJoanneEmailConfirmCancelText(t *testing.T) {
+	if !isJoanneEmailConfirmText("confirm send") {
+		t.Fatalf("expected confirm send to match")
+	}
+	if isJoanneEmailConfirmText("please send this now to bob") {
+		t.Fatalf("did not expect broad sentence to match strict confirmation")
+	}
+	if !isJoanneEmailCancelText("cancel") {
+		t.Fatalf("expected cancel to match")
+	}
+}
+
+func TestJoannePendingEmailLifecycle(t *testing.T) {
+	b := &Bot{
+		joanneEmailPending: map[string]joannePendingEmail{},
+	}
+	b.setJoannePendingEmail("C1", "U1", "T1", joannePendingEmail{
+		To:        "grant@bimross.com",
+		Subject:   "Hello",
+		Body:      "Body",
+		Goal:      "Confirm timing",
+		ThreadTS:  "T1",
+		CreatedAt: time.Now().UTC(),
+		ExpiresAt: time.Now().UTC().Add(5 * time.Minute),
+	})
+	got, ok := b.getJoannePendingEmail("C1", "U1", "T1")
+	if !ok {
+		t.Fatalf("expected pending email")
+	}
+	if got.To != "grant@bimross.com" {
+		t.Fatalf("pending recipient mismatch: %q", got.To)
+	}
+
+	b.clearJoannePendingEmail("C1", "U1", "T1")
+	if _, ok := b.getJoannePendingEmail("C1", "U1", "T1"); ok {
+		t.Fatalf("expected pending email to be cleared")
+	}
+}
+
+func TestJoannePendingEmailExpires(t *testing.T) {
+	b := &Bot{
+		joanneEmailPending: map[string]joannePendingEmail{},
+	}
+	b.setJoannePendingEmail("C1", "U1", "", joannePendingEmail{
+		To:        "grant@bimross.com",
+		ExpiresAt: time.Now().UTC().Add(-1 * time.Minute),
+	})
+	if _, ok := b.getJoannePendingEmail("C1", "U1", ""); ok {
+		t.Fatalf("expected expired pending email to be removed")
 	}
 }
