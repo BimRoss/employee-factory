@@ -129,6 +129,15 @@ type Config struct {
 	GoogleRefreshToken string
 	GoogleSenderEmail  string
 	GoogleSenderName   string
+
+	// Ross ops tooling (read-only kubernetes + redis through ops proxy).
+	RossOpsEnabled              bool
+	RossOpsLogOnly              bool
+	RossOpsProxyURL             string
+	RossOpsProxyToken           string
+	RossOpsDefaultNamespace     string
+	RossOpsAllowedNamespaces    []string
+	RossOpsAllowedRedisPrefixes []string
 }
 
 // Load reads environment variables. Canonical keys (LLM_*, SLACK_*) take precedence;
@@ -208,6 +217,13 @@ func Load() (*Config, error) {
 		GoogleRefreshToken:                    strings.TrimSpace(os.Getenv("GOOGLE_REFRESH_TOKEN")),
 		GoogleSenderEmail:                     strings.TrimSpace(os.Getenv("GOOGLE_SENDER_EMAIL")),
 		GoogleSenderName:                      strings.TrimSpace(os.Getenv("GOOGLE_SENDER_NAME")),
+		RossOpsEnabled:                        parseBoolEnv("ROSS_OPS_ENABLED", false),
+		RossOpsLogOnly:                        parseBoolEnv("ROSS_OPS_LOG_ONLY", false),
+		RossOpsProxyURL:                       strings.TrimSpace(os.Getenv("ROSS_OPS_PROXY_URL")),
+		RossOpsProxyToken:                     strings.TrimSpace(os.Getenv("ROSS_OPS_PROXY_TOKEN")),
+		RossOpsDefaultNamespace:               strings.TrimSpace(os.Getenv("ROSS_OPS_DEFAULT_NAMESPACE")),
+		RossOpsAllowedNamespaces:              parseCSVEnv("ROSS_OPS_ALLOWED_NAMESPACES"),
+		RossOpsAllowedRedisPrefixes:           parseCSVEnv("ROSS_OPS_ALLOWED_REDIS_PREFIXES"),
 	}
 
 	if err := parseMultiagentEnv(cfg); err != nil {
@@ -236,6 +252,9 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("set SLACK_APP_TOKEN or employee-prefixed _SLACK_APP_TOKEN")
 	}
 	if err := validateJoanneEmailConfig(cfg); err != nil {
+		return nil, err
+	}
+	if err := validateRossOpsConfig(cfg); err != nil {
 		return nil, err
 	}
 
@@ -533,6 +552,28 @@ func parseBoolEnv(key string, def bool) bool {
 	}
 }
 
+func parseCSVEnv(key string) []string {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return nil
+	}
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	seen := map[string]struct{}{}
+	for _, p := range parts {
+		v := strings.TrimSpace(p)
+		if v == "" {
+			continue
+		}
+		if _, ok := seen[v]; ok {
+			continue
+		}
+		seen[v] = struct{}{}
+		out = append(out, v)
+	}
+	return out
+}
+
 // parseFloat64EnvClamp parses a float env; empty uses def; invalid uses def; clamps to [min, max].
 func parseFloat64EnvClamp(key string, def, min, max float64) float64 {
 	v := strings.TrimSpace(os.Getenv(key))
@@ -573,6 +614,25 @@ func validateJoanneEmailConfig(cfg *Config) error {
 	}
 	if cfg.GoogleSenderEmail == "" {
 		return fmt.Errorf("set GOOGLE_SENDER_EMAIL when JOANNE_EMAIL_ENABLED=true for EMPLOYEE_ID=joanne")
+	}
+	return nil
+}
+
+func validateRossOpsConfig(cfg *Config) error {
+	if cfg == nil {
+		return nil
+	}
+	if !cfg.RossOpsEnabled {
+		return nil
+	}
+	if !strings.EqualFold(strings.TrimSpace(cfg.EmployeeID), "ross") {
+		return nil
+	}
+	if strings.TrimSpace(cfg.RossOpsProxyURL) == "" {
+		return fmt.Errorf("set ROSS_OPS_PROXY_URL when ROSS_OPS_ENABLED=true for EMPLOYEE_ID=ross")
+	}
+	if strings.TrimSpace(cfg.RossOpsProxyToken) == "" {
+		return fmt.Errorf("set ROSS_OPS_PROXY_TOKEN when ROSS_OPS_ENABLED=true for EMPLOYEE_ID=ross")
 	}
 	return nil
 }

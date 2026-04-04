@@ -8,11 +8,13 @@ RUN go mod download
 
 COPY . .
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o /out/employee-factory ./cmd/employee-factory
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o /out/ops-proxy ./cmd/ops-proxy
 
 FROM gcr.io/distroless/static:nonroot
 WORKDIR /app
 
 COPY --from=builder /out/employee-factory /app/employee-factory
+COPY --from=builder /out/ops-proxy /app/ops-proxy
 
 EXPOSE 8080
 ENV HTTP_ADDR=:8080

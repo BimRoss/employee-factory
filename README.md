@@ -89,8 +89,35 @@ Phase 1 adds only ConfigMap keys; runtime Secrets stay the same.
 
 - `scripts/update-runtime-secrets.sh` syncs one employee runtime Secret from local `.env` (`EMPLOYEE_ID=alex|tim|ross|garth|joanne`).
 - `scripts/update-all-runtime-secrets.sh` syncs all five runtime Secrets in one pass.
-- Synced keys include `LLM_API_KEY`, or `OPENROUTER_API_KEY` / `OPENROUTER_KEY` (written into Secret as `LLM_API_KEY`), `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`, optional `SLACK_USER_TOKEN`, optional `LLM_MODEL`, and `MULTIAGENT_BOT_USER_IDS`.
+- Synced keys include `LLM_API_KEY`, or `OPENROUTER_API_KEY` / `OPENROUTER_KEY` (written into Secret as `LLM_API_KEY`), `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`, optional `SLACK_USER_TOKEN`, optional `LLM_MODEL`, `MULTIAGENT_BOT_USER_IDS`, Joanne Gmail keys, and Ross ops proxy keys.
 - `MULTIAGENT_BOT_USER_IDS` auto-resolves from each bot token via Slack `auth.test` (order from `MULTIAGENT_ORDER`, default `ross,tim,alex,garth,joanne`) unless explicitly provided.
+
+## Ross read-only ops tooling (kubernetes + redis)
+
+Ross can service prompts like “check what’s deployed”, “kubernetes logs”, and “redis key …” through a dedicated in-cluster read-only proxy service.
+
+### Required env/runtime keys (Ross + ops-proxy)
+
+- `ROSS_OPS_ENABLED=true`
+- `ROSS_OPS_LOG_ONLY=true` for first rollout pass (classification + trace only, no proxy execution)
+- `ROSS_OPS_PROXY_URL` (for Ross runtime; defaults to in-cluster service URL)
+- `ROSS_OPS_PROXY_TOKEN` (shared auth token between Ross and the proxy)
+- `ROSS_OPS_DEFAULT_NAMESPACE` (optional default namespace for status/log requests)
+- `OPS_PROXY_ALLOWED_NAMESPACES` (comma-separated namespace allowlist)
+- `OPS_PROXY_ALLOWED_REDIS_PREFIXES` (comma-separated key-prefix allowlist)
+
+The secret sync script writes both `ROSS_OPS_PROXY_TOKEN` and `OPS_PROXY_AUTH_TOKEN` so Ross and the proxy can share one token source from `employee-factory-ross-runtime`.
+
+### Runtime behavior
+
+- Slack ingress is classified with structured extraction + parser fallback.
+- Matched requests call one of:
+  - `POST /k8s/status`
+  - `POST /k8s/logs`
+  - `POST /redis/read`
+- Requests are bounded by namespace/prefix allowlists and short timeouts.
+- During staged rollout, keep `ROSS_OPS_LOG_ONLY=true`, inspect `ross_ops` logs, then switch to `false` to enforce tool execution.
+- Responses are posted back into the same channel/thread.
 
 ## Joanne Gmail send-email tooling (first vertical slice)
 

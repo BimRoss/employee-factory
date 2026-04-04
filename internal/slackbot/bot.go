@@ -12,6 +12,7 @@ import (
 	"github.com/bimross/employee-factory/internal/config"
 	"github.com/bimross/employee-factory/internal/gmailsender"
 	"github.com/bimross/employee-factory/internal/llm"
+	"github.com/bimross/employee-factory/internal/opsproxy"
 	"github.com/bimross/employee-factory/internal/persona"
 	"github.com/bimross/employee-factory/internal/router"
 	"github.com/bimross/employee-factory/internal/threadstore"
@@ -73,6 +74,7 @@ type Bot struct {
 	// generalAutoReplyLock coordinates cross-pod single-response behavior for plain #general messages.
 	generalAutoReplyLock *generalAutoReplyLocker
 	gmailSender          *gmailsender.Sender
+	opsProxyClient       *opsproxy.Client
 }
 
 // New constructs a Socket Mode bot. owner may be nil (human-root owner is inferred from thread history).
@@ -80,12 +82,21 @@ func New(cfg *config.Config, lm *llm.EmployeeLLM, p *persona.Loader, owner threa
 	api := slack.New(cfg.SlackBotToken, slack.OptionAppLevelToken(cfg.SlackAppToken))
 	window := time.Duration(cfg.SlackOutboundWindowSec) * time.Second
 	var sender *gmailsender.Sender
+	var opsClient *opsproxy.Client
 	if strings.EqualFold(strings.TrimSpace(cfg.EmployeeID), "joanne") && cfg.JoanneEmailEnabled {
 		s, err := gmailsender.New(cfg)
 		if err != nil {
 			log.Printf("gmail sender init: %v", err)
 		} else {
 			sender = s
+		}
+	}
+	if strings.EqualFold(strings.TrimSpace(cfg.EmployeeID), "ross") && cfg.RossOpsEnabled {
+		client, err := opsproxy.NewClient(cfg.RossOpsProxyURL, cfg.RossOpsProxyToken, 12*time.Second)
+		if err != nil {
+			log.Printf("ross ops proxy client init: %v", err)
+		} else {
+			opsClient = client
 		}
 	}
 	return &Bot{
@@ -99,6 +110,7 @@ func New(cfg *config.Config, lm *llm.EmployeeLLM, p *persona.Loader, owner threa
 		generalAutoReplyLock:     newGeneralAutoReplyLocker(strings.TrimSpace(cfg.RedisURL)),
 		activeBroadcastByChannel: map[string]int{},
 		gmailSender:              sender,
+		opsProxyClient:           opsClient,
 	}
 }
 
@@ -214,6 +226,9 @@ func (b *Bot) onMessage(ctx context.Context, ev *slackevents.MessageEvent) {
 	}) {
 		return
 	}
+	if b.tryHandleRossOps(ctx, channel, rawText, ev.TimeStamp, "") {
+		return
+	}
 	if b.tryHandleJoanneSendEmail(ctx, channel, rawText, ev.User, ev.TimeStamp, "") {
 		return
 	}
@@ -322,6 +337,9 @@ func (b *Bot) onAppMention(ctx context.Context, ev *slackevents.AppMentionEvent)
 		RawText:   rawText,
 		Phase:     routerPhaseIngress,
 	}) {
+		return
+	}
+	if b.tryHandleRossOps(ctx, channel, rawText, ev.TimeStamp, strings.TrimSpace(ev.ThreadTimeStamp)) {
 		return
 	}
 	if b.tryHandleJoanneSendEmail(ctx, channel, rawText, ev.User, ev.TimeStamp, strings.TrimSpace(ev.ThreadTimeStamp)) {
