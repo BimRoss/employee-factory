@@ -105,6 +105,23 @@ Before posting, replies pass a completion gate that checks for:
 
 If flagged, the bot runs one repair rewrite pass and only then posts. If repair still fails, it posts a short complete fallback sentence instead of an empty or broken message.
 
+## Slack presentation layer (text-first)
+
+The runtime now supports a policy-based presentation layer for structured responses, with defaults tuned to preserve the current conversational feel.
+
+- `SLACK_PRESENTATION_ENABLE_BLOCKS=false` keeps all responses text-only.
+- `SLACK_PRESENTATION_JSON_MODE` controls JSON rendering for structured payloads:
+  - `off` (default)
+  - `auto`
+  - `force_for_structured`
+- `SLACK_PRESENTATION_MAX_BLOCK_ITEMS` limits how many rows can render in Block Kit before falling back to plain text.
+
+Current rollout behavior:
+
+- Human chat replies remain plain text and continue through existing `normalizeSlackReply` rules.
+- Ross ops structured responses (waitlist + metrics) can render as Slack blocks when enabled and bounded.
+- Every block response still includes fallback text for notifications/history compatibility.
+
 ## Deploying to the admin cluster (Fleet)
 
 Phase 1 adds only ConfigMap keys; runtime Secrets stay the same.

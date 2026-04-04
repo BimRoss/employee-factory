@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/bimross/employee-factory/internal/router"
-	"github.com/slack-go/slack"
 )
 
 type routerPhase string
@@ -100,11 +99,10 @@ func (b *Bot) postAvailabilityRouterAck(ctx context.Context, channel, threadTS, 
 		return nil
 	}
 
-	opts := []slack.MsgOption{slack.MsgOptionText(text, false)}
-	if strings.TrimSpace(threadTS) != "" {
-		opts = append(opts, slack.MsgOptionTS(strings.TrimSpace(threadTS)))
-	}
-	_, _, err := b.api.PostMessageContext(ctx, channel, opts...)
+	err := b.postSlackResponse(ctx, channel, slackResponse{
+		Text:     text,
+		ThreadTS: strings.TrimSpace(threadTS),
+	})
 	if err != nil {
 		return err
 	}

@@ -345,11 +345,10 @@ func (b *Bot) postLLMReplyInThread(ctx context.Context, channel, sourceText, use
 		strings.TrimSpace(b.cfg.EmployeeID), time.Since(startLLM).Milliseconds(), err != nil, utf8.RuneCountInString(userText))
 	if err != nil {
 		log.Printf("llm reply error (employee=%s): %v", strings.TrimSpace(b.cfg.EmployeeID), err)
-		opts := []slack.MsgOption{
-			slack.MsgOptionText(llmErrorUserMessage(err), false),
-			slack.MsgOptionTS(threadTS),
-		}
-		if _, _, err := b.api.PostMessageContext(ctx, channel, opts...); err != nil {
+		if err := b.postSlackResponse(ctx, channel, slackResponse{
+			Text:     llmErrorUserMessage(err),
+			ThreadTS: threadTS,
+		}); err != nil {
 			log.Printf("slack post message: %v", err)
 			return
 		}
@@ -375,14 +374,13 @@ func (b *Bot) postLLMReplyInThread(ctx context.Context, channel, sourceText, use
 		reply = enforceMultiagentMentionPolicy(reply, b.cfg, b.botUserID, handoff)
 		reply = normalizeSlackReply(reply, b.cfg, b.botUserID)
 	}
-	opts := []slack.MsgOption{
-		slack.MsgOptionText(reply, false),
-		slack.MsgOptionTS(threadTS),
-	}
 	startPost := time.Now()
-	if _, _, err := b.api.PostMessageContext(ctx, channel, opts...); err != nil {
+	if err := b.postSlackResponse(ctx, channel, slackResponse{
+		Text:     reply,
+		ThreadTS: threadTS,
+	}); err != nil {
 		log.Printf("slack_post: path=thread employee=%s ms=%d err=%t",
-			strings.TrimSpace(b.cfg.EmployeeID), time.Since(startPost).Milliseconds(), err != nil)
+			strings.TrimSpace(b.cfg.EmployeeID), time.Since(startPost).Milliseconds(), true)
 		log.Printf("slack post message: %v", err)
 		return
 	}

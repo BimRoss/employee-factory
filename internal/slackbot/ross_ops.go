@@ -9,7 +9,6 @@ import (
 
 	"github.com/bimross/employee-factory/internal/opsproxy"
 	"github.com/sashabaranov/go-openai/jsonschema"
-	"github.com/slack-go/slack"
 )
 
 type rossOpsActionExtract struct {
@@ -351,7 +350,10 @@ func (b *Bot) handleRossOps(parent context.Context, channel, requestUserID, thre
 	ctx, cancel := context.WithTimeout(parent, 20*time.Second)
 	defer cancel()
 	if b.opsProxyClient == nil {
-		b.postRossOpsStatus(ctx, channel, threadTS, "Ops tooling is enabled but proxy client is not configured yet.")
+		b.postRossOpsStatus(ctx, channel, slackResponse{
+			Text:     "Ops tooling is enabled but proxy client is not configured yet.",
+			ThreadTS: threadTS,
+		})
 		return
 	}
 	namespace := strings.TrimSpace(action.Namespace)
@@ -359,7 +361,10 @@ func (b *Bot) handleRossOps(parent context.Context, channel, requestUserID, thre
 		namespace = b.cfg.RossOpsDefaultNamespace
 	}
 	if action.Operation != opsproxy.OperationRedisRead && namespace != "" && !containsValue(b.cfg.RossOpsAllowedNamespaces, namespace) {
-		b.postRossOpsStatus(ctx, channel, threadTS, fmt.Sprintf("Namespace `%s` is outside the Ross ops allowlist.", namespace))
+		b.postRossOpsStatus(ctx, channel, slackResponse{
+			Text:     fmt.Sprintf("Namespace `%s` is outside the Ross ops allowlist.", namespace),
+			ThreadTS: threadTS,
+		})
 		return
 	}
 	switch action.Operation {
@@ -371,10 +376,16 @@ func (b *Bot) handleRossOps(parent context.Context, channel, requestUserID, thre
 			Limit:     action.Limit,
 		})
 		if err != nil {
-			b.postRossOpsStatus(ctx, channel, threadTS, "I could not fetch Kubernetes status from the ops proxy.")
+			b.postRossOpsStatus(ctx, channel, slackResponse{
+				Text:     "I could not fetch Kubernetes status from the ops proxy.",
+				ThreadTS: threadTS,
+			})
 			return
 		}
-		b.postRossOpsStatus(ctx, channel, threadTS, formatRossStatus(resp))
+		b.postRossOpsStatus(ctx, channel, slackResponse{
+			Text:     formatRossStatus(resp),
+			ThreadTS: threadTS,
+		})
 	case opsproxy.OperationK8sMetrics:
 		log.Printf("ross_ops: execute operation=%s namespace=%s limit=%d", action.Operation, namespace, action.Limit)
 		resp, err := b.opsProxyClient.Metrics(ctx, opsproxy.MetricsRequest{
@@ -382,10 +393,21 @@ func (b *Bot) handleRossOps(parent context.Context, channel, requestUserID, thre
 			Limit:     action.Limit,
 		})
 		if err != nil {
-			b.postRossOpsStatus(ctx, channel, threadTS, fmt.Sprintf("I could not fetch Kubernetes CPU/RAM metrics from the ops proxy (%s).", compactOpsErr(err)))
+			b.postRossOpsStatus(ctx, channel, slackResponse{
+				Text:     fmt.Sprintf("I could not fetch Kubernetes CPU/RAM metrics from the ops proxy (%s).", compactOpsErr(err)),
+				ThreadTS: threadTS,
+			})
 			return
 		}
-		b.postRossOpsStatus(ctx, channel, threadTS, formatRossMetrics(resp))
+		b.postRossOpsStatus(ctx, channel, b.buildRossPresentedResponse(threadTS, ResponseKindOpsMetrics, formatRossMetrics(resp), OpsMetricsPresentation{
+			Response: resp,
+		}, PresentationOptions{
+			EnableBlocks:  b.cfg.SlackPresentationEnableBlocks,
+			JSONMode:      b.cfg.SlackPresentationJSONMode,
+			MaxBlockItems: b.cfg.SlackPresentationMaxBlockItems,
+			ItemCount:     len(resp.Nodes),
+			HasStructured: true,
+		}))
 	case opsproxy.OperationK8sLogs:
 		log.Printf("ross_ops: execute operation=%s namespace=%s target=%s", action.Operation, namespace, strings.TrimSpace(action.Target))
 		resp, err := b.opsProxyClient.Logs(ctx, opsproxy.LogsRequest{
@@ -396,7 +418,10 @@ func (b *Bot) handleRossOps(parent context.Context, channel, requestUserID, thre
 			SinceSeconds: action.SinceSeconds,
 		})
 		if err != nil {
-			b.postRossOpsStatus(ctx, channel, threadTS, "I could not fetch logs from the ops proxy.")
+			b.postRossOpsStatus(ctx, channel, slackResponse{
+				Text:     "I could not fetch logs from the ops proxy.",
+				ThreadTS: threadTS,
+			})
 			return
 		}
 		text := strings.TrimSpace(resp.Lines)
@@ -406,15 +431,25 @@ func (b *Bot) handleRossOps(parent context.Context, channel, requestUserID, thre
 		if resp.Truncated {
 			text += "\n…truncated"
 		}
-		b.postRossOpsStatus(ctx, channel, threadTS, fmt.Sprintf("Logs `%s` in `%s`:\n```%s```", resp.Target, resp.Namespace, text))
+		b.postRossOpsStatus(ctx, channel, b.buildRossPresentedResponse(threadTS, ResponseKindOpsLogs, fmt.Sprintf("Logs `%s` in `%s`:\n```%s```", resp.Target, resp.Namespace, text), nil, PresentationOptions{
+			EnableBlocks:  b.cfg.SlackPresentationEnableBlocks,
+			JSONMode:      b.cfg.SlackPresentationJSONMode,
+			MaxBlockItems: b.cfg.SlackPresentationMaxBlockItems,
+		}))
 	case opsproxy.OperationRedisRead:
 		log.Printf("ross_ops: execute operation=%s key=%s prefix=%s", action.Operation, strings.TrimSpace(action.RedisKey), strings.TrimSpace(action.RedisPrefix))
 		if action.RedisKey != "" && !prefixAllowed(action.RedisKey, b.cfg.RossOpsAllowedRedisPrefixes) {
-			b.postRossOpsStatus(ctx, channel, threadTS, "That redis key is outside the Ross ops allowlist.")
+			b.postRossOpsStatus(ctx, channel, slackResponse{
+				Text:     "That redis key is outside the Ross ops allowlist.",
+				ThreadTS: threadTS,
+			})
 			return
 		}
 		if action.RedisPrefix != "" && !prefixAllowed(action.RedisPrefix, b.cfg.RossOpsAllowedRedisPrefixes) {
-			b.postRossOpsStatus(ctx, channel, threadTS, "That redis prefix is outside the Ross ops allowlist.")
+			b.postRossOpsStatus(ctx, channel, slackResponse{
+				Text:     "That redis prefix is outside the Ross ops allowlist.",
+				ThreadTS: threadTS,
+			})
 			return
 		}
 		resp, err := b.opsProxyClient.RedisRead(ctx, opsproxy.RedisReadRequest{
@@ -423,14 +458,23 @@ func (b *Bot) handleRossOps(parent context.Context, channel, requestUserID, thre
 			Limit:  action.Limit,
 		})
 		if err != nil {
-			b.postRossOpsStatus(ctx, channel, threadTS, "I could not read Redis from the ops proxy.")
+			b.postRossOpsStatus(ctx, channel, slackResponse{
+				Text:     "I could not read Redis from the ops proxy.",
+				ThreadTS: threadTS,
+			})
 			return
 		}
-		b.postRossOpsStatus(ctx, channel, threadTS, formatRossRedis(resp))
+		b.postRossOpsStatus(ctx, channel, slackResponse{
+			Text:     formatRossRedis(resp),
+			ThreadTS: threadTS,
+		})
 	case opsproxy.OperationWaitlistEmails:
 		log.Printf("ross_ops: execute operation=%s requester=%s question_type=%s limit=%d reveal_full=%t", action.Operation, strings.TrimSpace(requestUserID), action.QuestionType, action.Limit, action.RevealFull)
 		if strings.TrimSpace(requestUserID) != strings.TrimSpace(b.cfg.ChatAllowedUserID) {
-			b.postRossOpsStatus(ctx, channel, threadTS, "I can only return waitlist emails for the authorized operator.")
+			b.postRossOpsStatus(ctx, channel, slackResponse{
+				Text:     "I can only return waitlist emails for the authorized operator.",
+				ThreadTS: threadTS,
+			})
 			return
 		}
 		resp, err := b.opsProxyClient.WaitlistEmails(ctx, opsproxy.WaitlistEmailsRequest{
@@ -438,14 +482,30 @@ func (b *Bot) handleRossOps(parent context.Context, channel, requestUserID, thre
 			RevealFull: action.RevealFull,
 		})
 		if err != nil {
-			b.postRossOpsStatus(ctx, channel, threadTS, "I could not fetch waitlist emails from Redis.")
+			b.postRossOpsStatus(ctx, channel, slackResponse{
+				Text:     "I could not fetch waitlist emails from Redis.",
+				ThreadTS: threadTS,
+			})
 			return
 		}
 		answer, synthesisMode, orderingConfidence := buildWaitlistAnswer(action.QuestionType, action.RawPrompt, resp, action.RevealFull)
 		log.Printf("ross_ops: waitlist synthesis mode=%s ordering_confidence=%s question_type=%s emails=%d", synthesisMode, orderingConfidence, action.QuestionType, len(resp.Emails))
-		b.postRossOpsStatus(ctx, channel, threadTS, answer)
+		b.postRossOpsStatus(ctx, channel, b.buildRossPresentedResponse(threadTS, ResponseKindOpsWaitlist, answer, OpsWaitlistPresentation{
+			QuestionType: action.QuestionType,
+			Response:     resp,
+			RevealFull:   action.RevealFull,
+		}, PresentationOptions{
+			EnableBlocks:  b.cfg.SlackPresentationEnableBlocks,
+			JSONMode:      b.cfg.SlackPresentationJSONMode,
+			MaxBlockItems: b.cfg.SlackPresentationMaxBlockItems,
+			ItemCount:     len(resp.Emails),
+			HasStructured: true,
+		}))
 	default:
-		b.postRossOpsStatus(ctx, channel, threadTS, "I can run `k8s_status`, `k8s_metrics`, `k8s_logs`, `redis_read`, or `waitlist_emails` once the request is specific.")
+		b.postRossOpsStatus(ctx, channel, slackResponse{
+			Text:     "I can run `k8s_status`, `k8s_metrics`, `k8s_logs`, `redis_read`, or `waitlist_emails` once the request is specific.",
+			ThreadTS: threadTS,
+		})
 	}
 }
 
@@ -569,14 +629,36 @@ func compactOpsErr(err error) string {
 	return msg
 }
 
-func (b *Bot) postRossOpsStatus(ctx context.Context, channel, threadTS, text string) {
+func (b *Bot) buildRossPresentedResponse(threadTS string, kind ResponseKind, fallbackText string, payload any, opts PresentationOptions) slackResponse {
+	mode, reason := ResolvePresentation(kind, opts)
+	resp := slackResponse{
+		Text:     fallbackText,
+		ThreadTS: threadTS,
+	}
+	if mode == PresentationModeFencedJSON && payload != nil {
+		if jsonBody, err := RenderFencedJSON(payload); err == nil {
+			resp.Text = jsonBody
+		} else {
+			log.Printf("ross_ops: presentation fallback reason=json_render_err err=%v", err)
+		}
+	}
+	if mode == PresentationModeSlackBlocks {
+		blocks, fallback, ok := RenderBlocks(kind, payload, opts)
+		if ok && len(blocks) > 0 {
+			resp.Blocks = blocks
+			if strings.TrimSpace(fallback) != "" {
+				resp.Text = fallback
+			}
+		}
+	}
+	log.Printf("ross_ops: presentation kind=%s mode=%s reason=%s blocks=%t", kind, mode, reason, len(resp.Blocks) > 0)
+	return resp
+}
+
+func (b *Bot) postRossOpsStatus(ctx context.Context, channel string, resp slackResponse) {
 	postCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
-	opts := []slack.MsgOption{slack.MsgOptionText(strings.TrimSpace(text), false)}
-	if strings.TrimSpace(threadTS) != "" {
-		opts = append(opts, slack.MsgOptionTS(strings.TrimSpace(threadTS)))
-	}
-	if _, _, err := b.api.PostMessageContext(postCtx, channel, opts...); err != nil {
+	if err := b.postSlackResponse(postCtx, channel, resp); err != nil {
 		log.Printf("ross_ops: slack status post failed: %v", err)
 	}
 }

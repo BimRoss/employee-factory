@@ -708,9 +708,7 @@ func (b *Bot) postMultiagentReply(ctx context.Context, channel, sourceText, user
 		strings.TrimSpace(b.cfg.EmployeeID), time.Since(startLLM).Milliseconds(), err != nil, utf8.RuneCountInString(userPayload))
 	if err != nil {
 		log.Printf("llm reply error (employee=%s): %v", strings.TrimSpace(b.cfg.EmployeeID), err)
-		opts := []slack.MsgOption{slack.MsgOptionText(llmErrorUserMessage(err), false)}
-		_, _, err = b.api.PostMessageContext(ctx, channel, opts...)
-		if err != nil {
+		if err = b.postSlackResponse(ctx, channel, slackResponse{Text: llmErrorUserMessage(err)}); err != nil {
 			log.Printf("slack post message: %v", err)
 			return
 		}
@@ -729,9 +727,8 @@ func (b *Bot) postMultiagentReply(ctx context.Context, channel, sourceText, user
 	reply = normalizeSlackReply(reply, b.cfg, b.botUserID)
 	reply = enforceMultiagentMentionPolicy(reply, b.cfg, b.botUserID, handoff)
 	reply = normalizeSlackReply(reply, b.cfg, b.botUserID)
-	opts := []slack.MsgOption{slack.MsgOptionText(reply, false)}
 	startPost := time.Now()
-	_, _, err = b.api.PostMessageContext(ctx, channel, opts...)
+	err = b.postSlackResponse(ctx, channel, slackResponse{Text: reply})
 	log.Printf("slack_post: path=multiagent employee=%s ms=%d err=%t",
 		strings.TrimSpace(b.cfg.EmployeeID), time.Since(startPost).Milliseconds(), err != nil)
 	if err != nil {
@@ -753,8 +750,7 @@ func (b *Bot) postPresenceAck(ctx context.Context, channel, text string) {
 		log.Printf("slack outbound rate limit: skipping presence ack (employee=%s channel=%s)", b.cfg.EmployeeID, channel)
 		return
 	}
-	opts := []slack.MsgOption{slack.MsgOptionText(text, false)}
-	_, _, err := b.api.PostMessageContext(ctx, channel, opts...)
+	err := b.postSlackResponse(ctx, channel, slackResponse{Text: text})
 	if err != nil {
 		log.Printf("slack post message (presence ack): %v", err)
 		return

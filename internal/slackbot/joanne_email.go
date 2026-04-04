@@ -11,7 +11,6 @@ import (
 	"github.com/bimross/employee-factory/internal/emailaction"
 	"github.com/bimross/employee-factory/internal/gmailsender"
 	"github.com/sashabaranov/go-openai/jsonschema"
-	"github.com/slack-go/slack"
 )
 
 var reLikelyEmail = regexp.MustCompile(`(?i)\b[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}\b`)
@@ -302,11 +301,10 @@ func (b *Bot) generateJoanneEmailBody(ctx context.Context, instruction, recipien
 func (b *Bot) postJoanneEmailStatus(ctx context.Context, channel, threadTS, text string) {
 	postCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
-	opts := []slack.MsgOption{slack.MsgOptionText(strings.TrimSpace(text), false)}
-	if strings.TrimSpace(threadTS) != "" {
-		opts = append(opts, slack.MsgOptionTS(strings.TrimSpace(threadTS)))
-	}
-	if _, _, err := b.api.PostMessageContext(postCtx, channel, opts...); err != nil {
+	if err := b.postSlackResponse(postCtx, channel, slackResponse{
+		Text:     strings.TrimSpace(text),
+		ThreadTS: strings.TrimSpace(threadTS),
+	}); err != nil {
 		log.Printf("joanne_email: slack status post failed: %v", err)
 	}
 }

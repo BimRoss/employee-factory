@@ -48,6 +48,10 @@ type Config struct {
 	// Prevents runaway reply loops when agents @mention each other. 0 = disabled.
 	SlackOutboundWindowSec    int
 	SlackOutboundMaxPerWindow int
+	// Slack presentation layer: keep text-first by default, allow structured responses when enabled.
+	SlackPresentationEnableBlocks  bool
+	SlackPresentationJSONMode      string // off | auto | force_for_structured
+	SlackPresentationMaxBlockItems int
 
 	SlackBotToken string
 	SlackAppToken string
@@ -186,23 +190,26 @@ func Load() (*Config, error) {
 		)),
 		LLMSystemMaxRunes: parseIntEnvSigned("LLM_SYSTEM_MAX_RUNES", 48000),
 		// Higher default budget reduces model-side truncation; brevity is still governed by Slack response policy.
-		LLMMaxTokens:              parseIntEnvMin("LLM_MAX_TOKENS", 900, 1),
-		LLMTemperature:            parseFloat32Env("LLM_TEMPERATURE", 0.55),
-		LLMTopP:                   parseOptionalFloat32("LLM_TOP_P"),
-		LLMMaxRetries:             parseIntEnvMinAllowZero("LLM_MAX_RETRIES", 2, 0),
-		LLMRetryBackoffMS:         parseIntEnvMin("LLM_RETRY_BACKOFF_MS", 400, 50),
-		LLMFallbackModel:          strings.TrimSpace(os.Getenv("LLM_FALLBACK_MODEL")),
-		LLMFallbackTimeoutSec:     parseIntEnvMin("LLM_FALLBACK_TIMEOUT_SEC", 8, 1),
-		LLMReplyTimeoutSec:        parseIntEnvMin("LLM_REPLY_TIMEOUT_SEC", 35, 5),
-		LLMThreadMaxMessages:      parseIntEnvMin("LLM_THREAD_MAX_MESSAGES", 25, 1),
-		LLMThreadMaxRunes:         parseIntEnvMin("LLM_THREAD_MAX_RUNES", 16000, 256),
-		LLMAlexHints:              parseBoolEnv("LLM_ALEX_HINTS", true),
-		SlackOutboundWindowSec:    parseIntEnvMin("SLACK_OUTBOUND_WINDOW_SEC", 60, 1),
-		SlackOutboundMaxPerWindow: parseIntEnvDefaultOrZero("SLACK_OUTBOUND_MAX_PER_WINDOW", 10),
-		SlackBotToken:             strings.TrimSpace(firstNonEmpty(os.Getenv("SLACK_BOT_TOKEN"), employeePrefixed(empID, "SLACK_BOT_TOKEN"), os.Getenv("ALEX_SLACK_BOT_TOKEN"))),
-		SlackAppToken:             strings.TrimSpace(firstNonEmpty(os.Getenv("SLACK_APP_TOKEN"), employeePrefixed(empID, "SLACK_APP_TOKEN"), os.Getenv("ALEX_SLACK_APP_TOKEN"))),
-		PersonaPath:               getEnv("PERSONA_PATH", "/config/persona.md"),
-		PersonaReloadMS:           parseIntEnv("PERSONA_RELOAD_MS", 60000),
+		LLMMaxTokens:                   parseIntEnvMin("LLM_MAX_TOKENS", 900, 1),
+		LLMTemperature:                 parseFloat32Env("LLM_TEMPERATURE", 0.55),
+		LLMTopP:                        parseOptionalFloat32("LLM_TOP_P"),
+		LLMMaxRetries:                  parseIntEnvMinAllowZero("LLM_MAX_RETRIES", 2, 0),
+		LLMRetryBackoffMS:              parseIntEnvMin("LLM_RETRY_BACKOFF_MS", 400, 50),
+		LLMFallbackModel:               strings.TrimSpace(os.Getenv("LLM_FALLBACK_MODEL")),
+		LLMFallbackTimeoutSec:          parseIntEnvMin("LLM_FALLBACK_TIMEOUT_SEC", 8, 1),
+		LLMReplyTimeoutSec:             parseIntEnvMin("LLM_REPLY_TIMEOUT_SEC", 35, 5),
+		LLMThreadMaxMessages:           parseIntEnvMin("LLM_THREAD_MAX_MESSAGES", 25, 1),
+		LLMThreadMaxRunes:              parseIntEnvMin("LLM_THREAD_MAX_RUNES", 16000, 256),
+		LLMAlexHints:                   parseBoolEnv("LLM_ALEX_HINTS", true),
+		SlackOutboundWindowSec:         parseIntEnvMin("SLACK_OUTBOUND_WINDOW_SEC", 60, 1),
+		SlackOutboundMaxPerWindow:      parseIntEnvDefaultOrZero("SLACK_OUTBOUND_MAX_PER_WINDOW", 10),
+		SlackPresentationEnableBlocks:  parseBoolEnv("SLACK_PRESENTATION_ENABLE_BLOCKS", false),
+		SlackPresentationJSONMode:      normalizePresentationJSONModeEnv(strings.TrimSpace(os.Getenv("SLACK_PRESENTATION_JSON_MODE"))),
+		SlackPresentationMaxBlockItems: parseIntEnvMin("SLACK_PRESENTATION_MAX_BLOCK_ITEMS", 8, 1),
+		SlackBotToken:                  strings.TrimSpace(firstNonEmpty(os.Getenv("SLACK_BOT_TOKEN"), employeePrefixed(empID, "SLACK_BOT_TOKEN"), os.Getenv("ALEX_SLACK_BOT_TOKEN"))),
+		SlackAppToken:                  strings.TrimSpace(firstNonEmpty(os.Getenv("SLACK_APP_TOKEN"), employeePrefixed(empID, "SLACK_APP_TOKEN"), os.Getenv("ALEX_SLACK_APP_TOKEN"))),
+		PersonaPath:                    getEnv("PERSONA_PATH", "/config/persona.md"),
+		PersonaReloadMS:                parseIntEnv("PERSONA_RELOAD_MS", 60000),
 		// Canonical: CHAT_ALLOWED_USER_ID, SLACK_CHAT_CHANNEL_ID. Aliases for local/.env convenience:
 		// SLACK_CEO_USER_ID, SLACK_CHANNEL_ID (first non-empty wins in firstNonEmpty order).
 		ChatAllowedUserID:                    strings.TrimSpace(firstNonEmpty(os.Getenv("CHAT_ALLOWED_USER_ID"), os.Getenv("SLACK_CEO_USER_ID"))),
@@ -587,6 +594,17 @@ func parseCSVEnv(key string) []string {
 		out = append(out, v)
 	}
 	return out
+}
+
+func normalizePresentationJSONModeEnv(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "auto":
+		return "auto"
+	case "force_for_structured":
+		return "force_for_structured"
+	default:
+		return "off"
+	}
 }
 
 // parseFloat64EnvClamp parses a float env; empty uses def; invalid uses def; clamps to [min, max].
