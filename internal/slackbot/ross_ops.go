@@ -317,7 +317,7 @@ func (b *Bot) handleRossOps(parent context.Context, channel, requestUserID, thre
 			Limit:     action.Limit,
 		})
 		if err != nil {
-			b.postRossOpsStatus(ctx, channel, threadTS, "I could not fetch Kubernetes CPU/RAM metrics from the ops proxy.")
+			b.postRossOpsStatus(ctx, channel, threadTS, fmt.Sprintf("I could not fetch Kubernetes CPU/RAM metrics from the ops proxy (%s).", compactOpsErr(err)))
 			return
 		}
 		b.postRossOpsStatus(ctx, channel, threadTS, formatRossMetrics(resp))
@@ -454,6 +454,20 @@ func milliToCores(v int64) float64 {
 
 func bytesToGi(v int64) float64 {
 	return float64(v) / (1024.0 * 1024.0 * 1024.0)
+}
+
+func compactOpsErr(err error) string {
+	if err == nil {
+		return "unknown error"
+	}
+	msg := strings.TrimSpace(err.Error())
+	if msg == "" {
+		return "unknown error"
+	}
+	if len(msg) > 120 {
+		msg = strings.TrimSpace(msg[:120]) + "..."
+	}
+	return msg
 }
 
 func (b *Bot) postRossOpsStatus(ctx context.Context, channel, threadTS, text string) {
