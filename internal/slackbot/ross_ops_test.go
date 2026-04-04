@@ -1,6 +1,7 @@
 package slackbot
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/bimross/employee-factory/internal/opsproxy"
@@ -89,5 +90,14 @@ func TestParseRossOpsAction_WaitlistEmailsWithoutRedisKeyword(t *testing.T) {
 	}
 	if action.Operation != opsproxy.OperationWaitlistEmails {
 		t.Fatalf("operation mismatch: %q", action.Operation)
+	}
+}
+
+func TestFormatRossWaitlistEmails_EmptyIncludesSearchedPrefixes(t *testing.T) {
+	text := formatRossWaitlistEmails(opsproxy.WaitlistEmailsResponse{
+		SearchedPrefixes: []string{"makeacompany:waitlist:", "waitlist:"},
+	}, false)
+	if !strings.Contains(text, "makeacompany:waitlist:") {
+		t.Fatalf("expected searched prefixes in output: %q", text)
 	}
 }

@@ -85,5 +85,6 @@ type WaitlistEmail struct {
 }
 
 type WaitlistEmailsResponse struct {
-	Emails []WaitlistEmail `json:"emails"`
+	Emails           []WaitlistEmail `json:"emails"`
+	SearchedPrefixes []string        `json:"searched_prefixes,omitempty"`
 }

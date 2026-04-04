@@ -387,6 +387,9 @@ func formatRossRedis(resp opsproxy.RedisReadResponse) string {
 
 func formatRossWaitlistEmails(resp opsproxy.WaitlistEmailsResponse, revealFull bool) string {
 	if len(resp.Emails) == 0 {
+		if len(resp.SearchedPrefixes) > 0 {
+			return fmt.Sprintf("No waitlist emails found. I scanned prefixes: `%s`.", strings.Join(resp.SearchedPrefixes, "`, `"))
+		}
 		return "No waitlist emails found in the allowed Redis prefixes."
 	}
 	header := "Waitlist emails (masked):"

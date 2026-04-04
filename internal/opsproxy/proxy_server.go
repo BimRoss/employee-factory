@@ -346,12 +346,9 @@ func (s *ProxyServer) handleWaitlistEmails(w http.ResponseWriter, r *http.Reques
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	prefix := strings.TrimSpace(req.Prefix)
-	if prefix == "" {
-		prefix = s.cfg.WaitlistPrefixes[0]
-	}
-	if !s.waitlistPrefixAllowed(prefix) {
-		writeErr(w, http.StatusForbidden, "waitlist prefix is not allowed")
+	prefixes, err := s.resolveWaitlistPrefixes(strings.TrimSpace(req.Prefix))
+	if err != nil {
+		writeErr(w, http.StatusForbidden, err.Error())
 		return
 	}
 	limit := req.Limit
@@ -361,10 +358,15 @@ func (s *ProxyServer) handleWaitlistEmails(w http.ResponseWriter, r *http.Reques
 	if limit > s.cfg.MaxWaitlistLimit {
 		limit = s.cfg.MaxWaitlistLimit
 	}
-	log.Printf("ops_proxy: request path=/redis/waitlist-emails prefix=%s limit=%d reveal_full=%t", prefix, limit, req.RevealFull)
+	log.Printf(
+		"ops_proxy: request path=/redis/waitlist-emails prefixes=%s limit=%d reveal_full=%t",
+		strings.Join(prefixes, ","),
+		limit,
+		req.RevealFull,
+	)
 	ctx, cancel := context.WithTimeout(r.Context(), s.cfg.RequestTimeout)
 	defer cancel()
-	resp, err := s.readWaitlistEmails(ctx, prefix, limit, req.RevealFull)
+	resp, err := s.readWaitlistEmails(ctx, prefixes, limit, req.RevealFull)
 	if err != nil {
 		log.Printf("ops_proxy: error path=/redis/waitlist-emails err=%v", err)
 		writeErr(w, http.StatusBadGateway, err.Error())
@@ -415,53 +417,110 @@ func (s *ProxyServer) readRedis(ctx context.Context, key, prefix string, limit i
 
 var emailRegex = regexp.MustCompile(`(?i)\b[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}\b`)
 
-func (s *ProxyServer) readWaitlistEmails(ctx context.Context, prefix string, limit int, revealFull bool) (WaitlistEmailsResponse, error) {
-	match := prefix + "*"
+func (s *ProxyServer) readWaitlistEmails(ctx context.Context, prefixes []string, limit int, revealFull bool) (WaitlistEmailsResponse, error) {
+	if len(prefixes) == 0 {
+		return WaitlistEmailsResponse{}, fmt.Errorf("no waitlist prefixes configured")
+	}
 	seen := map[string]struct{}{}
 	out := make([]WaitlistEmail, 0, limit)
-	var cursor uint64
-	for len(out) < limit {
-		keys, next, err := s.redis.Scan(ctx, cursor, match, int64(limit*3)).Result()
-		if err != nil {
-			return WaitlistEmailsResponse{}, fmt.Errorf("redis scan: %w", err)
-		}
-		for _, key := range keys {
-			item, err := s.readRedisKey(ctx, key)
+	for _, prefix := range prefixes {
+		match := prefix + "*"
+		var cursor uint64
+		for len(out) < limit {
+			keys, next, err := s.redis.Scan(ctx, cursor, match, int64(limit*3)).Result()
 			if err != nil {
-				continue
+				return WaitlistEmailsResponse{}, fmt.Errorf("redis scan: %w", err)
 			}
-			found := emailRegex.FindAllString(item.Value, -1)
-			for _, email := range found {
-				normalized := strings.ToLower(strings.TrimSpace(email))
-				if normalized == "" {
+			for _, key := range keys {
+				item, err := s.readRedisKey(ctx, key)
+				if err != nil {
 					continue
 				}
-				if _, ok := seen[normalized]; ok {
-					continue
+				found := emailRegex.FindAllString(item.Value, -1)
+				for _, email := range found {
+					normalized := strings.ToLower(strings.TrimSpace(email))
+					if normalized == "" {
+						continue
+					}
+					if _, ok := seen[normalized]; ok {
+						continue
+					}
+					seen[normalized] = struct{}{}
+					value := normalized
+					if !revealFull {
+						value = maskEmail(normalized)
+					}
+					out = append(out, WaitlistEmail{
+						Email:  value,
+						Source: key,
+					})
+					if len(out) >= limit {
+						break
+					}
 				}
-				seen[normalized] = struct{}{}
-				value := normalized
-				if !revealFull {
-					value = maskEmail(normalized)
-				}
-				out = append(out, WaitlistEmail{
-					Email:  value,
-					Source: key,
-				})
 				if len(out) >= limit {
 					break
 				}
 			}
-			if len(out) >= limit {
+			cursor = next
+			if cursor == 0 {
 				break
 			}
 		}
-		cursor = next
-		if cursor == 0 {
+		if len(out) >= limit {
 			break
 		}
 	}
-	return WaitlistEmailsResponse{Emails: out}, nil
+	return WaitlistEmailsResponse{
+		Emails:           out,
+		SearchedPrefixes: prefixes,
+	}, nil
+}
+
+func (s *ProxyServer) resolveWaitlistPrefixes(requestedPrefix string) ([]string, error) {
+	req := strings.TrimSpace(requestedPrefix)
+	if req != "" {
+		if !s.waitlistPrefixAllowed(req) {
+			return nil, fmt.Errorf("waitlist prefix is not allowed")
+		}
+		return []string{req}, nil
+	}
+	return prioritizeWaitlistPrefixes(s.cfg.WaitlistPrefixes), nil
+}
+
+func prioritizeWaitlistPrefixes(prefixes []string) []string {
+	if len(prefixes) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(prefixes))
+	seen := map[string]struct{}{}
+
+	// Prefer the canonical makeacompany waitlist keyspace first.
+	for _, p := range prefixes {
+		v := strings.TrimSpace(p)
+		if v == "" {
+			continue
+		}
+		if strings.HasPrefix(v, "makeacompany:waitlist:") {
+			if _, ok := seen[v]; ok {
+				continue
+			}
+			out = append(out, v)
+			seen[v] = struct{}{}
+		}
+	}
+	for _, p := range prefixes {
+		v := strings.TrimSpace(p)
+		if v == "" {
+			continue
+		}
+		if _, ok := seen[v]; ok {
+			continue
+		}
+		out = append(out, v)
+		seen[v] = struct{}{}
+	}
+	return out
 }
 
 func (s *ProxyServer) readRedisKey(ctx context.Context, key string) (RedisItem, error) {
