@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/redis/go-redis/v9"
 	appsv1 "k8s.io/api/apps/v1"
@@ -618,6 +619,11 @@ func (s *ProxyServer) readRedis(ctx context.Context, key, prefix string, limit i
 
 var emailRegex = regexp.MustCompile(`(?i)\b[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}\b`)
 
+type waitlistEmailCandidate struct {
+	Email     string
+	UpdatedAt string
+}
+
 func (s *ProxyServer) readWaitlistEmails(ctx context.Context, prefixes []string, limit int, revealFull bool) (WaitlistEmailsResponse, error) {
 	if len(prefixes) == 0 {
 		return WaitlistEmailsResponse{}, fmt.Errorf("no waitlist prefixes configured")
@@ -637,9 +643,8 @@ func (s *ProxyServer) readWaitlistEmails(ctx context.Context, prefixes []string,
 				if err != nil {
 					continue
 				}
-				found := emailRegex.FindAllString(item.Value, -1)
-				for _, email := range found {
-					normalized := strings.ToLower(strings.TrimSpace(email))
+				for _, candidate := range extractWaitlistCandidates(item) {
+					normalized := strings.ToLower(strings.TrimSpace(candidate.Email))
 					if normalized == "" {
 						continue
 					}
@@ -652,8 +657,10 @@ func (s *ProxyServer) readWaitlistEmails(ctx context.Context, prefixes []string,
 						value = maskEmail(normalized)
 					}
 					out = append(out, WaitlistEmail{
-						Email:  value,
-						Source: key,
+						Email:     value,
+						UpdatedAt: strings.TrimSpace(candidate.UpdatedAt),
+						SourceKey: key,
+						Source:    key,
 					})
 					if len(out) >= limit {
 						break
@@ -672,10 +679,80 @@ func (s *ProxyServer) readWaitlistEmails(ctx context.Context, prefixes []string,
 			break
 		}
 	}
+	sort.SliceStable(out, func(i, j int) bool {
+		return waitlistEmailIsNewer(out[i], out[j])
+	})
+	withTimestamp := 0
+	for _, row := range out {
+		if strings.TrimSpace(row.UpdatedAt) != "" {
+			withTimestamp++
+		}
+	}
+	log.Printf("ops_proxy: waitlist_emails results=%d timestamped=%d missing_timestamp=%d", len(out), withTimestamp, len(out)-withTimestamp)
 	return WaitlistEmailsResponse{
 		Emails:           out,
 		SearchedPrefixes: prefixes,
 	}, nil
+}
+
+func extractWaitlistCandidates(item RedisItem) []waitlistEmailCandidate {
+	out := make([]waitlistEmailCandidate, 0, 4)
+	if strings.EqualFold(strings.TrimSpace(item.Type), "hash") {
+		var values map[string]string
+		if err := json.Unmarshal([]byte(item.Value), &values); err == nil && len(values) > 0 {
+			email := strings.ToLower(strings.TrimSpace(values["email"]))
+			updatedAt := strings.TrimSpace(values["updatedAt"])
+			if email != "" {
+				out = append(out, waitlistEmailCandidate{
+					Email:     email,
+					UpdatedAt: updatedAt,
+				})
+				return out
+			}
+		}
+	}
+	found := emailRegex.FindAllString(item.Value, -1)
+	for _, email := range found {
+		normalized := strings.ToLower(strings.TrimSpace(email))
+		if normalized == "" {
+			continue
+		}
+		out = append(out, waitlistEmailCandidate{
+			Email: normalized,
+		})
+	}
+	return out
+}
+
+func waitlistEmailIsNewer(a, b WaitlistEmail) bool {
+	aTime, aHas := parseWaitlistUpdatedAt(a.UpdatedAt)
+	bTime, bHas := parseWaitlistUpdatedAt(b.UpdatedAt)
+	switch {
+	case aHas && bHas:
+		if !aTime.Equal(bTime) {
+			return aTime.After(bTime)
+		}
+	case aHas && !bHas:
+		return true
+	case !aHas && bHas:
+		return false
+	}
+	if strings.TrimSpace(a.SourceKey) != strings.TrimSpace(b.SourceKey) {
+		return strings.TrimSpace(a.SourceKey) < strings.TrimSpace(b.SourceKey)
+	}
+	return strings.TrimSpace(a.Email) < strings.TrimSpace(b.Email)
+}
+
+func parseWaitlistUpdatedAt(raw string) (time.Time, bool) {
+	text := strings.TrimSpace(raw)
+	if text == "" {
+		return time.Time{}, false
+	}
+	parsed, err := time.Parse(time.RFC3339, text)
+	if err != nil {
+		return time.Time{}, false
+	}
+	return parsed, true
 }
 
 func (s *ProxyServer) resolveWaitlistPrefixes(requestedPrefix string) ([]string, error) {

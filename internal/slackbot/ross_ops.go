@@ -15,6 +15,7 @@ import (
 type rossOpsActionExtract struct {
 	Intent       string  `json:"intent"`
 	Operation    string  `json:"operation,omitempty"`
+	QuestionType string  `json:"question_type,omitempty"`
 	Namespace    string  `json:"namespace,omitempty"`
 	Target       string  `json:"target,omitempty"`
 	Container    string  `json:"container,omitempty"`
@@ -30,6 +31,7 @@ type rossOpsActionExtract struct {
 
 type rossOpsAction struct {
 	Operation    opsproxy.Operation
+	QuestionType waitlistQuestionType
 	Namespace    string
 	Target       string
 	Container    string
@@ -39,7 +41,17 @@ type rossOpsAction struct {
 	SinceSeconds int64
 	Limit        int
 	RevealFull   bool
+	RawPrompt    string
 }
+
+type waitlistQuestionType string
+
+const (
+	waitlistQuestionNone   waitlistQuestionType = "none"
+	waitlistQuestionLatest waitlistQuestionType = "latest_signup"
+	waitlistQuestionList   waitlistQuestionType = "list"
+	waitlistQuestionCount  waitlistQuestionType = "count"
+)
 
 func rossOpsActionSchema() jsonschema.Definition {
 	return jsonschema.Definition{
@@ -55,6 +67,11 @@ func rossOpsActionSchema() jsonschema.Definition {
 				Type:        jsonschema.String,
 				Enum:        []string{string(opsproxy.OperationK8sStatus), string(opsproxy.OperationK8sMetrics), string(opsproxy.OperationK8sLogs), string(opsproxy.OperationRedisRead), string(opsproxy.OperationWaitlistEmails)},
 				Description: "Desired read-only operation.",
+			},
+			"question_type": {
+				Type:        jsonschema.String,
+				Enum:        []string{string(waitlistQuestionLatest), string(waitlistQuestionList), string(waitlistQuestionCount), string(waitlistQuestionNone)},
+				Description: "When operation=waitlist_emails, classify the ask intent.",
 			},
 			"namespace": {
 				Type:        jsonschema.String,
@@ -121,11 +138,13 @@ func (b *Bot) tryHandleRossOps(ctx context.Context, channel, rawText, requestUse
 	if !matched {
 		return false
 	}
+	action.RawPrompt = cmd
 	log.Printf(
-		"ross_ops: accepted message_ts=%s source=%s operation=%s confidence=%.2f extract_err=%t reason=%q",
+		"ross_ops: accepted message_ts=%s source=%s operation=%s question_type=%s confidence=%.2f extract_err=%t reason=%q",
 		strings.TrimSpace(messageTS),
 		source,
 		action.Operation,
+		action.QuestionType,
 		extract.Confidence,
 		extractErr != nil,
 		strings.TrimSpace(extract.Reason),
@@ -141,8 +160,10 @@ func (b *Bot) tryHandleRossOps(ctx context.Context, channel, rawText, requestUse
 func resolveRossOpsAction(raw string, extract rossOpsActionExtract, extractErr error) (rossOpsAction, bool, string) {
 	waitlistPrompt := isWaitlistEmailPrompt(raw)
 	if extractErr == nil && strings.EqualFold(strings.TrimSpace(extract.Intent), "ops_query") {
+		questionType := parseWaitlistQuestionType(extract.QuestionType)
 		action := rossOpsAction{
 			Operation:    opsproxy.Operation(strings.TrimSpace(extract.Operation)),
+			QuestionType: questionType,
 			Namespace:    strings.TrimSpace(extract.Namespace),
 			Target:       strings.TrimSpace(extract.Target),
 			Container:    strings.TrimSpace(extract.Container),
@@ -159,7 +180,13 @@ func resolveRossOpsAction(raw string, extract rossOpsActionExtract, extractErr e
 			if action.Limit <= 0 {
 				action.Limit = 100
 			}
+			if action.QuestionType == waitlistQuestionNone {
+				action.QuestionType = inferWaitlistQuestionType(raw)
+			}
 			return action, true, "extractor_waitlist_override"
+		}
+		if action.Operation == opsproxy.OperationWaitlistEmails && action.QuestionType == waitlistQuestionNone {
+			action.QuestionType = inferWaitlistQuestionType(raw)
 		}
 		if action.Operation == opsproxy.OperationK8sStatus || action.Operation == opsproxy.OperationK8sMetrics || action.Operation == opsproxy.OperationK8sLogs || action.Operation == opsproxy.OperationRedisRead || action.Operation == opsproxy.OperationWaitlistEmails {
 			return action, true, "extractor"
@@ -179,6 +206,7 @@ func parseRossOpsAction(raw string) (rossOpsAction, bool) {
 	action := rossOpsAction{}
 	if isWaitlistEmailPrompt(text) {
 		action.Operation = opsproxy.OperationWaitlistEmails
+		action.QuestionType = inferWaitlistQuestionType(text)
 		action.Limit = 100
 		action.RevealFull = strings.Contains(text, "full") || strings.Contains(text, "unmask")
 		return action, true
@@ -235,6 +263,42 @@ func isWaitlistEmailPrompt(raw string) bool {
 	return strings.Contains(text, "waitlist") && (strings.Contains(text, "email") || strings.Contains(text, "emails"))
 }
 
+func parseWaitlistQuestionType(raw string) waitlistQuestionType {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case string(waitlistQuestionLatest):
+		return waitlistQuestionLatest
+	case string(waitlistQuestionList):
+		return waitlistQuestionList
+	case string(waitlistQuestionCount):
+		return waitlistQuestionCount
+	default:
+		return waitlistQuestionNone
+	}
+}
+
+func inferWaitlistQuestionType(raw string) waitlistQuestionType {
+	text := strings.ToLower(strings.TrimSpace(raw))
+	if text == "" {
+		return waitlistQuestionList
+	}
+	if containsAny(text, "how many", "count", "total", "number of") {
+		return waitlistQuestionCount
+	}
+	if containsAny(text, "last", "latest", "most recent", "newest") {
+		return waitlistQuestionLatest
+	}
+	return waitlistQuestionList
+}
+
+func containsAny(s string, terms ...string) bool {
+	for _, term := range terms {
+		if strings.Contains(s, term) {
+			return true
+		}
+	}
+	return false
+}
+
 func isK8sMetricsPrompt(raw string) bool {
 	text := strings.ToLower(strings.TrimSpace(raw))
 	if text == "" {
@@ -251,7 +315,7 @@ func (b *Bot) extractRossOpsAction(ctx context.Context, cmdText string) (rossOps
 	defer cancel()
 
 	systemPrompt := "You classify whether a Slack message is a Ross operations data request. Respond only with schema-compliant JSON."
-	userPrompt := "Message:\n" + strings.TrimSpace(cmdText) + "\n\nRules:\n- intent=ops_query only for explicit requests to inspect infrastructure/cache state.\n- operation must be one of k8s_status, k8s_metrics, k8s_logs, redis_read, waitlist_emails.\n- If user asks for CPU, RAM, or memory capacity/usage in Kubernetes, use k8s_metrics.\n- If user asks for waitlist emails, use waitlist_emails.\n- If unsure, use intent=none.\n- Never invent namespaces, targets, keys, or logs."
+	userPrompt := "Message:\n" + strings.TrimSpace(cmdText) + "\n\nRules:\n- intent=ops_query only for explicit requests to inspect infrastructure/cache state.\n- operation must be one of k8s_status, k8s_metrics, k8s_logs, redis_read, waitlist_emails.\n- If user asks for CPU, RAM, or memory capacity/usage in Kubernetes, use k8s_metrics.\n- If user asks for waitlist emails, use waitlist_emails and classify question_type:\n  - latest_signup for asks like last/latest/most recent signup.\n  - count for asks like how many/total/count.\n  - list for asks requesting list/show emails.\n  - none when operation is not waitlist_emails.\n- If unsure, use intent=none.\n- Never invent namespaces, targets, keys, or logs."
 	err := b.llm.ExtractStructured(extractCtx, systemPrompt, userPrompt, rossOpsActionSchema(), &out, "ross_ops_query")
 	if err != nil {
 		return rossOpsActionExtract{}, err
@@ -263,6 +327,7 @@ func (b *Bot) extractRossOpsAction(ctx context.Context, cmdText string) (rossOps
 	out.Container = strings.TrimSpace(out.Container)
 	out.RedisKey = strings.TrimSpace(out.RedisKey)
 	out.RedisPrefix = strings.TrimSpace(out.RedisPrefix)
+	out.QuestionType = string(parseWaitlistQuestionType(out.QuestionType))
 	out.Reason = strings.TrimSpace(out.Reason)
 	if out.Confidence < 0 {
 		out.Confidence = 0
@@ -363,7 +428,7 @@ func (b *Bot) handleRossOps(parent context.Context, channel, requestUserID, thre
 		}
 		b.postRossOpsStatus(ctx, channel, threadTS, formatRossRedis(resp))
 	case opsproxy.OperationWaitlistEmails:
-		log.Printf("ross_ops: execute operation=%s requester=%s limit=%d reveal_full=%t", action.Operation, strings.TrimSpace(requestUserID), action.Limit, action.RevealFull)
+		log.Printf("ross_ops: execute operation=%s requester=%s question_type=%s limit=%d reveal_full=%t", action.Operation, strings.TrimSpace(requestUserID), action.QuestionType, action.Limit, action.RevealFull)
 		if strings.TrimSpace(requestUserID) != strings.TrimSpace(b.cfg.ChatAllowedUserID) {
 			b.postRossOpsStatus(ctx, channel, threadTS, "I can only return waitlist emails for the authorized operator.")
 			return
@@ -376,7 +441,9 @@ func (b *Bot) handleRossOps(parent context.Context, channel, requestUserID, thre
 			b.postRossOpsStatus(ctx, channel, threadTS, "I could not fetch waitlist emails from Redis.")
 			return
 		}
-		b.postRossOpsStatus(ctx, channel, threadTS, formatRossWaitlistEmails(resp, action.RevealFull))
+		answer, synthesisMode, orderingConfidence := buildWaitlistAnswer(action.QuestionType, action.RawPrompt, resp, action.RevealFull)
+		log.Printf("ross_ops: waitlist synthesis mode=%s ordering_confidence=%s question_type=%s emails=%d", synthesisMode, orderingConfidence, action.QuestionType, len(resp.Emails))
+		b.postRossOpsStatus(ctx, channel, threadTS, answer)
 	default:
 		b.postRossOpsStatus(ctx, channel, threadTS, "I can run `k8s_status`, `k8s_metrics`, `k8s_logs`, `redis_read`, or `waitlist_emails` once the request is specific.")
 	}
@@ -427,6 +494,38 @@ func formatRossWaitlistEmails(resp opsproxy.WaitlistEmailsResponse, revealFull b
 		lines = append(lines, fmt.Sprintf("- `%s`", strings.TrimSpace(item.Email)))
 	}
 	return strings.Join(lines, "\n")
+}
+
+func buildWaitlistAnswer(questionType waitlistQuestionType, rawPrompt string, resp opsproxy.WaitlistEmailsResponse, revealFull bool) (string, string, string) {
+	if questionType == waitlistQuestionNone {
+		questionType = inferWaitlistQuestionType(rawPrompt)
+	}
+	if len(resp.Emails) == 0 {
+		return formatRossWaitlistEmails(resp, revealFull), "deterministic", "timestamp_missing"
+	}
+	switch questionType {
+	case waitlistQuestionLatest:
+		latest := resp.Emails[0]
+		email := strings.TrimSpace(latest.Email)
+		updatedAt := strings.TrimSpace(latest.UpdatedAt)
+		if email == "" {
+			return "I found waitlist records, but the latest email field was empty.", "deterministic", "timestamp_missing"
+		}
+		if updatedAt == "" {
+			return fmt.Sprintf("I found `%s`, but I cannot confirm it is the latest signup because timestamp metadata is missing.", email), "deterministic", "timestamp_missing"
+		}
+		return fmt.Sprintf("The latest waitlist signup is `%s` (updated `%s`).", email, updatedAt), "deterministic", "timestamp_sorted"
+	case waitlistQuestionCount:
+		prefixes := "configured waitlist prefixes"
+		if len(resp.SearchedPrefixes) > 0 {
+			prefixes = fmt.Sprintf("`%s`", strings.Join(resp.SearchedPrefixes, "`, `"))
+		}
+		return fmt.Sprintf("I found %d waitlist emails across %s.", len(resp.Emails), prefixes), "deterministic", "timestamp_sorted"
+	case waitlistQuestionList:
+		fallthrough
+	default:
+		return formatRossWaitlistEmails(resp, revealFull), "deterministic", "timestamp_sorted"
+	}
 }
 
 func formatRossMetrics(resp opsproxy.MetricsResponse) string {

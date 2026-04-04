@@ -121,7 +121,10 @@ type WaitlistEmailsRequest struct {
 }
 
 type WaitlistEmail struct {
-	Email  string `json:"email"`
+	Email     string `json:"email"`
+	UpdatedAt string `json:"updated_at,omitempty"`
+	SourceKey string `json:"source_key,omitempty"`
+	// Source is kept for backward compatibility with existing clients.
 	Source string `json:"source,omitempty"`
 }
 

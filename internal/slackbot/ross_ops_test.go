@@ -7,6 +7,106 @@ import (
 	"github.com/bimross/employee-factory/internal/opsproxy"
 )
 
+func TestInferWaitlistQuestionType(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want waitlistQuestionType
+	}{
+		{
+			name: "latest signup ask",
+			in:   "who was the last person to sign up on the waitlist?",
+			want: waitlistQuestionLatest,
+		},
+		{
+			name: "count ask",
+			in:   "how many waitlist emails do we have?",
+			want: waitlistQuestionCount,
+		},
+		{
+			name: "list ask default",
+			in:   "show the waitlist emails",
+			want: waitlistQuestionList,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := inferWaitlistQuestionType(tc.in)
+			if got != tc.want {
+				t.Fatalf("question type mismatch: got=%s want=%s", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestResolveRossOpsAction_ExtractorWaitlistOverrideSetsQuestionType(t *testing.T) {
+	extract := rossOpsActionExtract{
+		Intent:       "ops_query",
+		Operation:    string(opsproxy.OperationK8sStatus),
+		QuestionType: "",
+	}
+	action, matched, source := resolveRossOpsAction("who was the latest waitlist email signup?", extract, nil)
+	if !matched {
+		t.Fatal("expected waitlist prompt to match")
+	}
+	if source != "extractor_waitlist_override" {
+		t.Fatalf("source mismatch: got=%q", source)
+	}
+	if action.Operation != opsproxy.OperationWaitlistEmails {
+		t.Fatalf("operation mismatch: got=%s", action.Operation)
+	}
+	if action.QuestionType != waitlistQuestionLatest {
+		t.Fatalf("question type mismatch: got=%s", action.QuestionType)
+	}
+}
+
+func TestBuildWaitlistAnswer_LatestSignupSingleLine(t *testing.T) {
+	resp := opsproxy.WaitlistEmailsResponse{
+		Emails: []opsproxy.WaitlistEmail{
+			{
+				Email:     "a***@gmail.com",
+				UpdatedAt: "2026-04-04T12:00:00Z",
+				SourceKey: "makeacompany:waitlist:a@gmail.com",
+			},
+			{
+				Email:     "b***@gmail.com",
+				UpdatedAt: "2026-04-04T11:00:00Z",
+				SourceKey: "makeacompany:waitlist:b@gmail.com",
+			},
+		},
+	}
+	answer, mode, ordering := buildWaitlistAnswer(waitlistQuestionLatest, "latest waitlist signup", resp, false)
+	if mode != "deterministic" {
+		t.Fatalf("mode mismatch: got=%q", mode)
+	}
+	if ordering != "timestamp_sorted" {
+		t.Fatalf("ordering mismatch: got=%q", ordering)
+	}
+	if !strings.Contains(answer, "latest waitlist signup") || !strings.Contains(answer, "`a***@gmail.com`") {
+		t.Fatalf("unexpected answer: %q", answer)
+	}
+	if strings.Contains(answer, "\n- `") {
+		t.Fatalf("expected direct answer, got list output: %q", answer)
+	}
+}
+
+func TestBuildWaitlistAnswer_LatestSignupWithoutTimestamp(t *testing.T) {
+	resp := opsproxy.WaitlistEmailsResponse{
+		Emails: []opsproxy.WaitlistEmail{
+			{
+				Email: "a***@gmail.com",
+			},
+		},
+	}
+	answer, _, ordering := buildWaitlistAnswer(waitlistQuestionLatest, "latest waitlist signup", resp, false)
+	if ordering != "timestamp_missing" {
+		t.Fatalf("ordering mismatch: got=%q", ordering)
+	}
+	if !strings.Contains(strings.ToLower(answer), "cannot confirm") {
+		t.Fatalf("expected limitation message, got %q", answer)
+	}
+}
+
 func TestResolveRossOpsAction_Extractor(t *testing.T) {
 	extract := rossOpsActionExtract{
 		Intent:    "ops_query",

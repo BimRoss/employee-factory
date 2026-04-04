@@ -1,7 +1,10 @@
 package opsproxy
 
 import (
+	"encoding/json"
+	"sort"
 	"testing"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -157,5 +160,100 @@ func TestSummarizeNodeResources(t *testing.T) {
 	}
 	if rows[0].MemoryUsageBytes <= 0 {
 		t.Fatalf("expected memory usage bytes > 0")
+	}
+}
+
+func TestExtractWaitlistCandidates_HashWithEmail(t *testing.T) {
+	values := map[string]string{
+		"email":     "User@Example.com",
+		"updatedAt": "2026-04-04T12:00:00Z",
+	}
+	raw, err := json.Marshal(values)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	got := extractWaitlistCandidates(RedisItem{
+		Type:  "hash",
+		Value: string(raw),
+	})
+	if len(got) != 1 {
+		t.Fatalf("expected one candidate, got %d", len(got))
+	}
+	if got[0].Email != "user@example.com" {
+		t.Fatalf("email mismatch: got=%q", got[0].Email)
+	}
+	if got[0].UpdatedAt != "2026-04-04T12:00:00Z" {
+		t.Fatalf("updatedAt mismatch: got=%q", got[0].UpdatedAt)
+	}
+}
+
+func TestExtractWaitlistCandidates_FallbackRegex(t *testing.T) {
+	got := extractWaitlistCandidates(RedisItem{
+		Type:  "string",
+		Value: `{"email":"fallback@example.com"}`,
+	})
+	if len(got) != 1 {
+		t.Fatalf("expected one candidate, got %d", len(got))
+	}
+	if got[0].Email != "fallback@example.com" {
+		t.Fatalf("email mismatch: got=%q", got[0].Email)
+	}
+	if got[0].UpdatedAt != "" {
+		t.Fatalf("expected empty updatedAt, got %q", got[0].UpdatedAt)
+	}
+}
+
+func TestWaitlistEmailIsNewer_PrefersTimestamp(t *testing.T) {
+	rows := []WaitlistEmail{
+		{
+			Email:     "second@example.com",
+			UpdatedAt: "2026-04-04T10:00:00Z",
+			SourceKey: "makeacompany:waitlist:second@example.com",
+		},
+		{
+			Email:     "first@example.com",
+			UpdatedAt: "2026-04-04T11:00:00Z",
+			SourceKey: "makeacompany:waitlist:first@example.com",
+		},
+	}
+	sort.SliceStable(rows, func(i, j int) bool {
+		return waitlistEmailIsNewer(rows[i], rows[j])
+	})
+	if rows[0].Email != "first@example.com" {
+		t.Fatalf("expected newest timestamp first, got %q", rows[0].Email)
+	}
+}
+
+func TestWaitlistEmailIsNewer_TimestampBeatsMissing(t *testing.T) {
+	rows := []WaitlistEmail{
+		{
+			Email:     "missing@example.com",
+			UpdatedAt: "",
+			SourceKey: "makeacompany:waitlist:missing@example.com",
+		},
+		{
+			Email:     "has@example.com",
+			UpdatedAt: "2026-04-04T11:00:00Z",
+			SourceKey: "makeacompany:waitlist:has@example.com",
+		},
+	}
+	sort.SliceStable(rows, func(i, j int) bool {
+		return waitlistEmailIsNewer(rows[i], rows[j])
+	})
+	if rows[0].Email != "has@example.com" {
+		t.Fatalf("expected row with timestamp first, got %q", rows[0].Email)
+	}
+}
+
+func TestParseWaitlistUpdatedAt(t *testing.T) {
+	parsed, ok := parseWaitlistUpdatedAt("2026-04-04T11:00:00Z")
+	if !ok {
+		t.Fatal("expected timestamp parse to succeed")
+	}
+	if parsed.UTC().Format(time.RFC3339) != "2026-04-04T11:00:00Z" {
+		t.Fatalf("unexpected parse value: %s", parsed.UTC().Format(time.RFC3339))
+	}
+	if _, ok := parseWaitlistUpdatedAt("not-a-date"); ok {
+		t.Fatal("expected invalid timestamp parse to fail")
 	}
 }
