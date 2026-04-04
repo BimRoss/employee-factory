@@ -119,29 +119,6 @@ func shouldUseBroadcastBranchMode(anchorTS string, order []string, secret string
 	return u < probability
 }
 
-// shouldTriggerGeneralAutoReply deterministically gates plain-message auto-replies in #general.
-// All squad pods compute the same result from anchorTS + order + optional secret.
-func shouldTriggerGeneralAutoReply(anchorTS string, order []string, secret string, probability float64) bool {
-	if probability <= 0 {
-		return false
-	}
-	if probability >= 1 {
-		return true
-	}
-	var b strings.Builder
-	b.WriteString("general-auto-reply")
-	b.WriteByte(0)
-	b.WriteString(strings.TrimSpace(anchorTS))
-	b.WriteByte(0)
-	b.WriteString(strings.Join(order, ","))
-	b.WriteByte(0)
-	b.WriteString(secret)
-	sum := sha256.Sum256([]byte(b.String()))
-	x := binary.BigEndian.Uint64(sum[8:16])
-	u := float64(x) / float64(^uint64(0))
-	return u < probability
-}
-
 // selectSingleGeneralParticipant deterministically picks one employee key from order.
 // All squad pods compute the same winner from anchorTS + order + optional secret.
 func selectSingleGeneralParticipant(anchorTS string, order []string, secret string) string {
@@ -149,7 +126,7 @@ func selectSingleGeneralParticipant(anchorTS string, order []string, secret stri
 		return ""
 	}
 	var b strings.Builder
-	b.WriteString("general-auto-reply-winner")
+	b.WriteString("general-auto-reaction-winner")
 	b.WriteByte(0)
 	b.WriteString(strings.TrimSpace(anchorTS))
 	b.WriteByte(0)

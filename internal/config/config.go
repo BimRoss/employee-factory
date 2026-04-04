@@ -88,12 +88,11 @@ type Config struct {
 	// ThreadsEnabled when ChatAllowedUserID and SlackChatChannelID are both non-empty.
 	ChatAllowedUserID  string // Slack user id of the only human who may drive thread sessions
 	SlackChatChannelID string // e.g. C01234567 — thread routing only in this channel
-	// General auto-reply (non-mention plain messages): single deterministic squad winner.
-	SlackGeneralChannelID                 string  // e.g. C0GENERAL — plain-message random auto-reply channel gate
-	MultiagentGeneralAutoReplyEnabled     bool    // enable plain-message auto-reply selector
-	MultiagentGeneralAutoReplyProbability float64 // deterministic trigger chance [0..1] per qualifying message
-	RedisURL                              string  // for persisting thread owner on human-root threads; optional but required for that case
-	ThreadOwnerTTLSec                     int     // Redis TTL for owner key (default 30d)
+	// General auto-reaction (non-mention plain messages): single deterministic squad winner.
+	SlackGeneralChannelID                string // e.g. C0GENERAL — plain-message auto-reaction channel gate
+	MultiagentGeneralAutoReactionEnabled bool   // enable plain-message thumbs-up selector
+	RedisURL                             string // for persisting thread owner on human-root threads; optional but required for that case
+	ThreadOwnerTTLSec                    int    // Redis TTL for owner key (default 30d)
 
 	LLMChannelIncludeThreads   bool // enrich main-channel context with recent thread reply snippets
 	LLMChannelThreadParentScan int  // how many recent top-level messages to scan for reply_count (default 4)
@@ -206,41 +205,40 @@ func Load() (*Config, error) {
 		PersonaReloadMS:           parseIntEnv("PERSONA_RELOAD_MS", 60000),
 		// Canonical: CHAT_ALLOWED_USER_ID, SLACK_CHAT_CHANNEL_ID. Aliases for local/.env convenience:
 		// SLACK_CEO_USER_ID, SLACK_CHANNEL_ID (first non-empty wins in firstNonEmpty order).
-		ChatAllowedUserID:                     strings.TrimSpace(firstNonEmpty(os.Getenv("CHAT_ALLOWED_USER_ID"), os.Getenv("SLACK_CEO_USER_ID"))),
-		SlackChatChannelID:                    strings.TrimSpace(firstNonEmpty(os.Getenv("SLACK_CHAT_CHANNEL_ID"), os.Getenv("SLACK_CHANNEL_ID"))),
-		SlackGeneralChannelID:                 strings.TrimSpace(os.Getenv("SLACK_GENERAL_CHANNEL_ID")),
-		MultiagentGeneralAutoReplyEnabled:     parseBoolEnv("MULTIAGENT_GENERAL_AUTO_REPLY_ENABLED", false),
-		MultiagentGeneralAutoReplyProbability: parseFloat64EnvClamp("MULTIAGENT_GENERAL_AUTO_REPLY_PROBABILITY", 0.4, 0, 1),
-		RedisURL:                              strings.TrimSpace(os.Getenv("REDIS_URL")),
-		ThreadOwnerTTLSec:                     parseIntEnvMin("THREAD_OWNER_TTL_SEC", 30*24*3600, 60),
-		LLMChannelIncludeThreads:              parseBoolEnv("LLM_CHANNEL_INCLUDE_THREADS", false),
-		LLMChannelThreadParentScan:            parseIntEnvMin("LLM_CHANNEL_THREAD_PARENT_SCAN", 4, 1),
-		LLMChannelThreadRepliesMax:            parseIntEnvMin("LLM_CHANNEL_THREAD_REPLIES_MAX", 15, 1),
-		LLMContextWeightDecay:                 parseFloat64EnvClamp("LLM_CONTEXT_WEIGHT_DECAY", 0.5, 0.1, 1.0),
-		LLMContextWeightWindow:                parseIntEnvMin("LLM_CONTEXT_WEIGHT_WINDOW", 3, 1),
-		RouterAvailabilityEnabled:             parseBoolEnv("ROUTER_AVAILABILITY_ENABLED", false),
-		RouterLogOnly:                         parseBoolEnv("ROUTER_LOG_ONLY", false),
-		LessonsEnabled:                        parseBoolEnv("LESSONS_ENABLED", false),
-		LessonsLogOnly:                        parseBoolEnv("LESSONS_LOG_ONLY", true),
-		LessonsAutoApply:                      parseBoolEnv("LESSONS_AUTO_APPLY", true),
-		LessonsMinConfidence:                  parseFloat64EnvClamp("LESSONS_MIN_CONFIDENCE", 0.8, 0, 1),
-		LessonsMaxActive:                      parseIntEnvMin("LESSONS_MAX_ACTIVE", 3, 1),
-		LessonsTTLSeconds:                     parseIntEnvMin("LESSONS_TTL_SEC", 604800, 60),
-		LessonsMaxEvents:                      parseIntEnvMin("LESSONS_MAX_EVENTS", 200, 10),
-		LessonsMaxPromptRunes:                 parseIntEnvMin("LESSONS_MAX_PROMPT_RUNES", 600, 64),
-		JoanneEmailEnabled:                    parseBoolEnv("JOANNE_EMAIL_ENABLED", false),
-		GoogleClientID:                        strings.TrimSpace(os.Getenv("GOOGLE_CLIENT_ID")),
-		GoogleClientSecret:                    strings.TrimSpace(os.Getenv("GOOGLE_CLIENT_SECRET")),
-		GoogleRefreshToken:                    strings.TrimSpace(os.Getenv("GOOGLE_REFRESH_TOKEN")),
-		GoogleSenderEmail:                     strings.TrimSpace(os.Getenv("GOOGLE_SENDER_EMAIL")),
-		GoogleSenderName:                      strings.TrimSpace(os.Getenv("GOOGLE_SENDER_NAME")),
-		RossOpsEnabled:                        parseBoolEnv("ROSS_OPS_ENABLED", false),
-		RossOpsLogOnly:                        parseBoolEnv("ROSS_OPS_LOG_ONLY", false),
-		RossOpsProxyURL:                       strings.TrimSpace(os.Getenv("ROSS_OPS_PROXY_URL")),
-		RossOpsProxyToken:                     strings.TrimSpace(os.Getenv("ROSS_OPS_PROXY_TOKEN")),
-		RossOpsDefaultNamespace:               strings.TrimSpace(os.Getenv("ROSS_OPS_DEFAULT_NAMESPACE")),
-		RossOpsAllowedNamespaces:              parseCSVEnv("ROSS_OPS_ALLOWED_NAMESPACES"),
-		RossOpsAllowedRedisPrefixes:           parseCSVEnv("ROSS_OPS_ALLOWED_REDIS_PREFIXES"),
+		ChatAllowedUserID:                    strings.TrimSpace(firstNonEmpty(os.Getenv("CHAT_ALLOWED_USER_ID"), os.Getenv("SLACK_CEO_USER_ID"))),
+		SlackChatChannelID:                   strings.TrimSpace(firstNonEmpty(os.Getenv("SLACK_CHAT_CHANNEL_ID"), os.Getenv("SLACK_CHANNEL_ID"))),
+		SlackGeneralChannelID:                strings.TrimSpace(os.Getenv("SLACK_GENERAL_CHANNEL_ID")),
+		MultiagentGeneralAutoReactionEnabled: parseBoolEnv("MULTIAGENT_GENERAL_AUTO_REACTION_ENABLED", false),
+		RedisURL:                             strings.TrimSpace(os.Getenv("REDIS_URL")),
+		ThreadOwnerTTLSec:                    parseIntEnvMin("THREAD_OWNER_TTL_SEC", 30*24*3600, 60),
+		LLMChannelIncludeThreads:             parseBoolEnv("LLM_CHANNEL_INCLUDE_THREADS", false),
+		LLMChannelThreadParentScan:           parseIntEnvMin("LLM_CHANNEL_THREAD_PARENT_SCAN", 4, 1),
+		LLMChannelThreadRepliesMax:           parseIntEnvMin("LLM_CHANNEL_THREAD_REPLIES_MAX", 15, 1),
+		LLMContextWeightDecay:                parseFloat64EnvClamp("LLM_CONTEXT_WEIGHT_DECAY", 0.5, 0.1, 1.0),
+		LLMContextWeightWindow:               parseIntEnvMin("LLM_CONTEXT_WEIGHT_WINDOW", 3, 1),
+		RouterAvailabilityEnabled:            parseBoolEnv("ROUTER_AVAILABILITY_ENABLED", false),
+		RouterLogOnly:                        parseBoolEnv("ROUTER_LOG_ONLY", false),
+		LessonsEnabled:                       parseBoolEnv("LESSONS_ENABLED", false),
+		LessonsLogOnly:                       parseBoolEnv("LESSONS_LOG_ONLY", true),
+		LessonsAutoApply:                     parseBoolEnv("LESSONS_AUTO_APPLY", true),
+		LessonsMinConfidence:                 parseFloat64EnvClamp("LESSONS_MIN_CONFIDENCE", 0.8, 0, 1),
+		LessonsMaxActive:                     parseIntEnvMin("LESSONS_MAX_ACTIVE", 3, 1),
+		LessonsTTLSeconds:                    parseIntEnvMin("LESSONS_TTL_SEC", 604800, 60),
+		LessonsMaxEvents:                     parseIntEnvMin("LESSONS_MAX_EVENTS", 200, 10),
+		LessonsMaxPromptRunes:                parseIntEnvMin("LESSONS_MAX_PROMPT_RUNES", 600, 64),
+		JoanneEmailEnabled:                   parseBoolEnv("JOANNE_EMAIL_ENABLED", false),
+		GoogleClientID:                       strings.TrimSpace(os.Getenv("GOOGLE_CLIENT_ID")),
+		GoogleClientSecret:                   strings.TrimSpace(os.Getenv("GOOGLE_CLIENT_SECRET")),
+		GoogleRefreshToken:                   strings.TrimSpace(os.Getenv("GOOGLE_REFRESH_TOKEN")),
+		GoogleSenderEmail:                    strings.TrimSpace(os.Getenv("GOOGLE_SENDER_EMAIL")),
+		GoogleSenderName:                     strings.TrimSpace(os.Getenv("GOOGLE_SENDER_NAME")),
+		RossOpsEnabled:                       parseBoolEnv("ROSS_OPS_ENABLED", false),
+		RossOpsLogOnly:                       parseBoolEnv("ROSS_OPS_LOG_ONLY", false),
+		RossOpsProxyURL:                      strings.TrimSpace(os.Getenv("ROSS_OPS_PROXY_URL")),
+		RossOpsProxyToken:                    strings.TrimSpace(os.Getenv("ROSS_OPS_PROXY_TOKEN")),
+		RossOpsDefaultNamespace:              strings.TrimSpace(os.Getenv("ROSS_OPS_DEFAULT_NAMESPACE")),
+		RossOpsAllowedNamespaces:             parseCSVEnv("ROSS_OPS_ALLOWED_NAMESPACES"),
+		RossOpsAllowedRedisPrefixes:          parseCSVEnv("ROSS_OPS_ALLOWED_REDIS_PREFIXES"),
 	}
 
 	if err := parseMultiagentEnv(cfg); err != nil {

@@ -178,25 +178,6 @@ func TestShouldUseBroadcastBranchMode_bounds(t *testing.T) {
 	}
 }
 
-func TestShouldTriggerGeneralAutoReply_deterministic(t *testing.T) {
-	order := []string{"ross", "tim", "alex", "garth"}
-	a := shouldTriggerGeneralAutoReply("1743491234.567890", order, "secret", 0.4)
-	b := shouldTriggerGeneralAutoReply("1743491234.567890", order, "secret", 0.4)
-	if a != b {
-		t.Fatalf("expected deterministic result for same anchor/secret/order: %v vs %v", a, b)
-	}
-}
-
-func TestShouldTriggerGeneralAutoReply_bounds(t *testing.T) {
-	order := []string{"ross", "tim"}
-	if shouldTriggerGeneralAutoReply("1743491234.567890", order, "secret", 0.0) {
-		t.Fatal("probability 0 should never trigger")
-	}
-	if !shouldTriggerGeneralAutoReply("1743491234.567890", order, "secret", 1.0) {
-		t.Fatal("probability 1 should always trigger")
-	}
-}
-
 func TestSelectSingleGeneralParticipant_deterministic(t *testing.T) {
 	order := []string{"ross", "tim", "alex", "garth"}
 	a := selectSingleGeneralParticipant("1743491234.567890", order, "secret")

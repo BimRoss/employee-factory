@@ -9,12 +9,12 @@ import (
 
 // CompanyChannelRuntime defines the first-pass runtime contract for one Slack channel/company.
 type CompanyChannelRuntime struct {
-	CompanySlug             string `json:"company_slug"`
-	ChannelID               string `json:"channel_id"`
-	DisplayName             string `json:"display_name,omitempty"`
-	PrimaryOwner            string `json:"primary_owner,omitempty"`
-	ThreadsEnabled          bool   `json:"threads_enabled"`
-	GeneralAutoReplyEnabled bool   `json:"general_auto_reply_enabled"`
+	CompanySlug                string `json:"company_slug"`
+	ChannelID                  string `json:"channel_id"`
+	DisplayName                string `json:"display_name,omitempty"`
+	PrimaryOwner               string `json:"primary_owner,omitempty"`
+	ThreadsEnabled             bool   `json:"threads_enabled"`
+	GeneralAutoReactionEnabled bool   `json:"general_auto_reaction_enabled"`
 }
 
 func parseCompanyChannelsEnv(cfg *Config) error {

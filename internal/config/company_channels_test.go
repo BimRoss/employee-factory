@@ -3,7 +3,7 @@ package config
 import "testing"
 
 func TestParseCompanyChannelsJSON(t *testing.T) {
-	raw := `[{"company_slug":"acme","channel_id":"C123","display_name":"Acme Inc","threads_enabled":true,"general_auto_reply_enabled":true}]`
+	raw := `[{"company_slug":"acme","channel_id":"C123","display_name":"Acme Inc","threads_enabled":true,"general_auto_reaction_enabled":true}]`
 	got, err := parseCompanyChannelsJSON(raw)
 	if err != nil {
 		t.Fatal(err)

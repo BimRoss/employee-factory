@@ -72,7 +72,7 @@ type Bot struct {
 
 	// threadOwner persists human-root thread owners when Redis is configured (optional cache).
 	threadOwner threadstore.OwnerStore
-	// generalAutoReplyLock coordinates cross-pod single-response behavior for plain #general messages.
+	// generalAutoReplyLock coordinates cross-pod single-reaction behavior for plain #general messages.
 	generalAutoReplyLock *generalAutoReplyLocker
 	gmailSender          *gmailsender.Sender
 	opsProxyClient       *opsproxy.Client
@@ -302,8 +302,8 @@ func (b *Bot) onMessage(ctx context.Context, ev *slackevents.MessageEvent) {
 		b.postLLMReply(ctx, channel, text, ev.TimeStamp, ev.User)
 		return
 	}
-	if b.dispatchGeneralAutoReply(ctx, channel, rawText, ev) {
-		log.Printf("slack_route: path=general_auto_reply employee=%s channel=%s anchor=%s", strings.TrimSpace(b.cfg.EmployeeID), channel, strings.TrimSpace(ev.TimeStamp))
+	if b.dispatchGeneralAutoReaction(ctx, channel, rawText, ev) {
+		log.Printf("slack_route: path=general_auto_reaction employee=%s channel=%s anchor=%s", strings.TrimSpace(b.cfg.EmployeeID), channel, strings.TrimSpace(ev.TimeStamp))
 		return
 	}
 }
@@ -549,83 +549,74 @@ func (b *Bot) dispatchBroadcastPresenceAck(ctx context.Context, channel, rawText
 	return true
 }
 
-// dispatchGeneralAutoReply handles plain #general messages (no explicit bot mentions)
-// by deterministically selecting one squad participant and posting a single reply.
-func (b *Bot) dispatchGeneralAutoReply(ctx context.Context, channel, rawText string, ev *slackevents.MessageEvent) bool {
+// dispatchGeneralAutoReaction handles plain #general messages (no explicit bot mentions)
+// by deterministically selecting one squad participant and adding a single thumbs-up reaction.
+func (b *Bot) dispatchGeneralAutoReaction(ctx context.Context, channel, rawText string, ev *slackevents.MessageEvent) bool {
 	if ev == nil || b.cfg == nil {
 		emp := ""
 		if b != nil && b.cfg != nil {
 			emp = strings.TrimSpace(b.cfg.EmployeeID)
 		}
-		log.Printf("general_auto_reply: skip reason=missing_event_or_config employee=%s", emp)
+		log.Printf("general_auto_reaction: skip reason=missing_event_or_config employee=%s", emp)
 		return false
 	}
 	mentions := mentionedSquadKeys(rawText, b.cfg)
 	if len(mentions) > 0 {
-		log.Printf("general_auto_reply: skip reason=explicit_squad_mention employee=%s mentions=%s", strings.TrimSpace(b.cfg.EmployeeID), strings.Join(mentions, ","))
+		log.Printf("general_auto_reaction: skip reason=explicit_squad_mention employee=%s mentions=%s", strings.TrimSpace(b.cfg.EmployeeID), strings.Join(mentions, ","))
 		return false
 	}
-	if !generalAutoReplyEligible(b.cfg, channel, ev.User) {
-		log.Printf("general_auto_reply: skip reason=ineligible employee=%s channel=%s user=%s", strings.TrimSpace(b.cfg.EmployeeID), strings.TrimSpace(channel), strings.TrimSpace(ev.User))
+	if !generalAutoReactionEligible(b.cfg, channel, ev.User) {
+		log.Printf("general_auto_reaction: skip reason=ineligible employee=%s channel=%s user=%s", strings.TrimSpace(b.cfg.EmployeeID), strings.TrimSpace(channel), strings.TrimSpace(ev.User))
 		return false
 	}
 	if skip, reason := shouldSkipGeneralAutoReply(rawText); skip {
-		log.Printf("general_auto_reply: skip reason=%s employee=%s channel=%s anchor=%s", reason, strings.TrimSpace(b.cfg.EmployeeID), strings.TrimSpace(channel), strings.TrimSpace(ev.TimeStamp))
+		log.Printf("general_auto_reaction: skip reason=%s employee=%s channel=%s anchor=%s", reason, strings.TrimSpace(b.cfg.EmployeeID), strings.TrimSpace(channel), strings.TrimSpace(ev.TimeStamp))
 		return false
 	}
 	anchorTS := strings.TrimSpace(ev.TimeStamp)
 	if anchorTS == "" {
-		log.Printf("general_auto_reply: skip reason=empty_anchor employee=%s", strings.TrimSpace(b.cfg.EmployeeID))
-		return false
-	}
-	if !shouldTriggerGeneralAutoReply(
-		anchorTS,
-		b.cfg.MultiagentOrder,
-		b.cfg.MultiagentShuffleSecret,
-		b.cfg.MultiagentGeneralAutoReplyProbability,
-	) {
-		log.Printf("general_auto_reply: skip reason=deterministic_probability employee=%s anchor=%s", strings.TrimSpace(b.cfg.EmployeeID), anchorTS)
+		log.Printf("general_auto_reaction: skip reason=empty_anchor employee=%s", strings.TrimSpace(b.cfg.EmployeeID))
 		return false
 	}
 	winner := selectSingleGeneralParticipant(anchorTS, b.cfg.MultiagentOrder, b.cfg.MultiagentShuffleSecret)
 	if winner == "" {
-		log.Printf("general_auto_reply: skip reason=empty_winner employee=%s anchor=%s", strings.TrimSpace(b.cfg.EmployeeID), anchorTS)
+		log.Printf("general_auto_reaction: skip reason=empty_winner employee=%s anchor=%s", strings.TrimSpace(b.cfg.EmployeeID), anchorTS)
 		return false
 	}
 	selfKey := strings.ToLower(strings.TrimSpace(b.cfg.EmployeeID))
-	log.Printf("general_auto_reply: candidate employee=%s winner=%s anchor=%s", selfKey, winner, anchorTS)
+	log.Printf("general_auto_reaction: candidate employee=%s winner=%s anchor=%s", selfKey, winner, anchorTS)
 	if selfKey == winner {
 		claimant := "winner:" + selfKey
 		status := b.tryGeneralAutoReplyClaim(ctx, channel, anchorTS, claimant)
 		if !generalAutoReplyWinnerShouldPost(status) {
-			log.Printf("general_auto_reply: winner_claim_missed employee=%s anchor=%s claim_status=%s", selfKey, anchorTS, status)
+			log.Printf("general_auto_reaction: winner_claim_missed employee=%s anchor=%s claim_status=%s", selfKey, anchorTS, status)
 			return false
 		}
 		if status == generalAutoReplyClaimBackendDown {
-			log.Printf("general_auto_reply: winner_fallback_without_claim employee=%s anchor=%s", selfKey, anchorTS)
+			log.Printf("general_auto_reaction: winner_fallback_without_claim employee=%s anchor=%s", selfKey, anchorTS)
 		}
-		if b.postLLMReplyWithResult(ctx, channel, rawText, anchorTS, ev.User) {
-			log.Printf("general_auto_reply: posted employee=%s path=winner anchor=%s claim_status=%s", selfKey, anchorTS, status)
+		if b.postGeneralAutoReactionWithResult(ctx, channel, anchorTS) {
+			log.Printf("general_auto_reaction: reacted employee=%s path=winner anchor=%s claim_status=%s", selfKey, anchorTS, status)
 			return true
 		}
-		log.Printf("general_auto_reply: post_failed employee=%s path=winner anchor=%s claim_status=%s", selfKey, anchorTS, status)
+		log.Printf("general_auto_reaction: react_failed employee=%s path=winner anchor=%s claim_status=%s", selfKey, anchorTS, status)
 		if status == generalAutoReplyClaimAcquired {
 			b.releaseGeneralAutoReplyClaim(ctx, channel, anchorTS, claimant)
 		}
 		return false
 	}
 	if b.generalAutoReplyLock == nil {
-		log.Printf("general_auto_reply: skip reason=no_lock_for_failover employee=%s winner=%s anchor=%s", selfKey, winner, anchorTS)
+		log.Printf("general_auto_reaction: skip reason=no_lock_for_failover employee=%s winner=%s anchor=%s", selfKey, winner, anchorTS)
 		return false
 	}
 	delay := generalAutoReplyFailoverDelay(selfKey, b.cfg.MultiagentOrder)
-	go b.tryGeneralAutoReplyFailover(ctx, channel, rawText, anchorTS, ev.User, selfKey, winner, delay)
-	log.Printf("general_auto_reply: failover_scheduled employee=%s winner=%s delay=%s anchor=%s", selfKey, winner, delay, anchorTS)
+	go b.tryGeneralAutoReplyFailover(ctx, channel, anchorTS, selfKey, winner, delay)
+	log.Printf("general_auto_reaction: failover_scheduled employee=%s winner=%s delay=%s anchor=%s", selfKey, winner, delay, anchorTS)
 	return false
 }
 
-func generalAutoReplyEligible(cfg *config.Config, channel, userID string) bool {
-	if cfg == nil || !cfg.MultiagentConfigured() || !cfg.MultiagentGeneralAutoReplyEnabled {
+func generalAutoReactionEligible(cfg *config.Config, channel, userID string) bool {
+	if cfg == nil || !cfg.MultiagentConfigured() || !cfg.MultiagentGeneralAutoReactionEnabled {
 		return false
 	}
 	generalChannel := strings.TrimSpace(cfg.SlackGeneralChannelID)
@@ -650,7 +641,7 @@ func generalAutoReplyFailoverDelay(selfKey string, order []string) time.Duration
 	return base + 5*time.Second
 }
 
-func (b *Bot) tryGeneralAutoReplyFailover(ctx context.Context, channel, rawText, anchorTS, sourceUserID, selfKey, winner string, delay time.Duration) {
+func (b *Bot) tryGeneralAutoReplyFailover(ctx context.Context, channel, anchorTS, selfKey, winner string, delay time.Duration) {
 	if delay > 0 {
 		select {
 		case <-ctx.Done():
@@ -661,14 +652,14 @@ func (b *Bot) tryGeneralAutoReplyFailover(ctx context.Context, channel, rawText,
 	claimant := "failover:" + selfKey
 	status := b.tryGeneralAutoReplyClaim(ctx, channel, anchorTS, claimant)
 	if !generalAutoReplyFailoverShouldPost(status) {
-		log.Printf("general_auto_reply: failover_not_selected employee=%s winner=%s anchor=%s claim_status=%s", selfKey, winner, anchorTS, status)
+		log.Printf("general_auto_reaction: failover_not_selected employee=%s winner=%s anchor=%s claim_status=%s", selfKey, winner, anchorTS, status)
 		return
 	}
-	if b.postLLMReplyWithResult(ctx, channel, rawText, anchorTS, sourceUserID) {
-		log.Printf("general_auto_reply: posted employee=%s path=failover winner=%s anchor=%s claim_status=%s", selfKey, winner, anchorTS, status)
+	if b.postGeneralAutoReactionWithResult(ctx, channel, anchorTS) {
+		log.Printf("general_auto_reaction: reacted employee=%s path=failover winner=%s anchor=%s claim_status=%s", selfKey, winner, anchorTS, status)
 		return
 	}
-	log.Printf("general_auto_reply: post_failed employee=%s path=failover winner=%s anchor=%s claim_status=%s", selfKey, winner, anchorTS, status)
+	log.Printf("general_auto_reaction: react_failed employee=%s path=failover winner=%s anchor=%s claim_status=%s", selfKey, winner, anchorTS, status)
 	b.releaseGeneralAutoReplyClaim(ctx, channel, anchorTS, claimant)
 }
 
@@ -681,7 +672,7 @@ func (b *Bot) tryGeneralAutoReplyClaim(ctx context.Context, channel, anchorTS, c
 	}
 	status, err := b.generalAutoReplyLock.TryClaim(ctx, channel, anchorTS, claimant, 90*time.Second)
 	if err != nil {
-		log.Printf("general_auto_reply: claim_error claimant=%s channel=%s anchor=%s err=%v", claimant, channel, anchorTS, err)
+		log.Printf("general_auto_reaction: claim_error claimant=%s channel=%s anchor=%s err=%v", claimant, channel, anchorTS, err)
 	}
 	return status
 }
@@ -699,8 +690,36 @@ func (b *Bot) releaseGeneralAutoReplyClaim(ctx context.Context, channel, anchorT
 		return
 	}
 	if err := b.generalAutoReplyLock.ReleaseIfOwned(ctx, channel, anchorTS, claimant); err != nil {
-		log.Printf("general_auto_reply: release_error claimant=%s channel=%s anchor=%s err=%v", claimant, channel, anchorTS, err)
+		log.Printf("general_auto_reaction: release_error claimant=%s channel=%s anchor=%s err=%v", claimant, channel, anchorTS, err)
 	}
+}
+
+func (b *Bot) postGeneralAutoReactionWithResult(ctx context.Context, channel, messageTS string) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	now := time.Now()
+	if b.outbound != nil && !b.outbound.allow(now) {
+		emp := strings.TrimSpace(b.cfg.EmployeeID)
+		if emp == "" {
+			emp = "default"
+		}
+		log.Printf("slack outbound rate limit: skipping general auto reaction (employee=%s channel=%s)", emp, channel)
+		return false
+	}
+
+	ref := slack.ItemRef{
+		Channel:   strings.TrimSpace(channel),
+		Timestamp: strings.TrimSpace(messageTS),
+	}
+	if err := b.api.AddReactionContext(ctx, "+1", ref); err != nil {
+		log.Printf("slack add reaction: %v", err)
+		return false
+	}
+	if b.outbound != nil {
+		b.outbound.record(time.Now())
+	}
+	return true
 }
 
 func (b *Bot) postLLMReply(ctx context.Context, channel, userText, messageTS, sourceUserID string) {

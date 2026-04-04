@@ -34,7 +34,7 @@ func newGeneralAutoReplyLocker(redisURL string) *generalAutoReplyLocker {
 }
 
 func (l *generalAutoReplyLocker) key(channelID, anchorTS string) string {
-	return fmt.Sprintf("employee-factory:general_auto_reply:%s:%s", strings.TrimSpace(channelID), strings.TrimSpace(anchorTS))
+	return fmt.Sprintf("employee-factory:general_auto_reaction:%s:%s", strings.TrimSpace(channelID), strings.TrimSpace(anchorTS))
 }
 
 func (l *generalAutoReplyLocker) TryClaim(ctx context.Context, channelID, anchorTS, claimant string, ttl time.Duration) (generalAutoReplyClaimStatus, error) {
