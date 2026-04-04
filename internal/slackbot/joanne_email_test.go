@@ -1,8 +1,10 @@
 package slackbot
 
 import (
+	"context"
 	"testing"
 
+	"github.com/bimross/employee-factory/internal/config"
 	"github.com/bimross/employee-factory/internal/emailaction"
 )
 
@@ -65,3 +67,30 @@ func TestResolveJoanneEmailAction_FallsBackToParser(t *testing.T) {
 type assertErrSentinel struct{}
 
 func (assertErrSentinel) Error() string { return "forced extract failure" }
+
+func TestShouldUseGrantRecipientFallback(t *testing.T) {
+	b := &Bot{cfg: &config.Config{ChatAllowedUserID: "UCEO"}}
+	if !b.shouldUseGrantRecipientFallback("UCEO", "me") {
+		t.Fatalf("expected explicit me alias fallback")
+	}
+	if !b.shouldUseGrantRecipientFallback("UCEO", "") {
+		t.Fatalf("expected implicit grant fallback for chat allowed user")
+	}
+	if b.shouldUseGrantRecipientFallback("UOTHER", "me") {
+		t.Fatalf("did not expect fallback for non-ceo user id")
+	}
+}
+
+func TestResolveJoanneEmailRecipient_GrantFallback(t *testing.T) {
+	b := &Bot{cfg: &config.Config{ChatAllowedUserID: "UCEO"}}
+	got, source, err := b.resolveJoanneEmailRecipient(context.TODO(), "", "UCEO")
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if got != grantFallbackRecipientEmail {
+		t.Fatalf("recipient mismatch: %q", got)
+	}
+	if source != "grant_user_fallback" {
+		t.Fatalf("source mismatch: %q", source)
+	}
+}

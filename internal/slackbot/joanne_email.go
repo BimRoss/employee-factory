@@ -16,6 +16,8 @@ import (
 
 var reLikelyEmail = regexp.MustCompile(`(?i)\b[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}\b`)
 
+const grantFallbackRecipientEmail = "grant@bimross.com"
+
 type joanneEmailActionExtract struct {
 	Intent          string  `json:"intent"`
 	To              string  `json:"to,omitempty"`
@@ -212,6 +214,9 @@ func (b *Bot) handleJoanneSendEmail(parent context.Context, channel, requestUser
 
 func (b *Bot) resolveJoanneEmailRecipient(ctx context.Context, explicitTo, requestUserID string) (email string, source string, err error) {
 	if to := strings.TrimSpace(explicitTo); to != "" {
+		if b.shouldUseGrantRecipientFallback(requestUserID, to) {
+			return grantFallbackRecipientEmail, "grant_me_alias", nil
+		}
 		cleanTo := normalizeEmailAddress(to)
 		if !isValidEmail(cleanTo) {
 			return "", "", fmt.Errorf("invalid explicit recipient")
@@ -222,11 +227,20 @@ func (b *Bot) resolveJoanneEmailRecipient(ctx context.Context, explicitTo, reque
 	if userID == "" {
 		return "", "", fmt.Errorf("missing requesting user id")
 	}
+	if b.shouldUseGrantRecipientFallback(userID, "") {
+		return grantFallbackRecipientEmail, "grant_user_fallback", nil
+	}
 	user, err := b.api.GetUserInfoContext(ctx, userID)
 	if err != nil {
+		if b.shouldUseGrantRecipientFallback(userID, "") {
+			return grantFallbackRecipientEmail, "grant_user_fallback", nil
+		}
 		return "", "", err
 	}
 	if user == nil || user.Profile.Email == "" {
+		if b.shouldUseGrantRecipientFallback(userID, "") {
+			return grantFallbackRecipientEmail, "grant_user_fallback", nil
+		}
 		return "", "", fmt.Errorf("requesting user has no email in Slack profile")
 	}
 	to := strings.TrimSpace(user.Profile.Email)
@@ -235,6 +249,26 @@ func (b *Bot) resolveJoanneEmailRecipient(ctx context.Context, explicitTo, reque
 		return "", "", fmt.Errorf("invalid inferred recipient")
 	}
 	return to, "inferred_from_slack_user", nil
+}
+
+func (b *Bot) shouldUseGrantRecipientFallback(requestUserID, explicitTo string) bool {
+	if b == nil || b.cfg == nil {
+		return false
+	}
+	allowed := strings.TrimSpace(b.cfg.ChatAllowedUserID)
+	if allowed == "" || strings.TrimSpace(requestUserID) != allowed {
+		return false
+	}
+	explicit := strings.ToLower(strings.TrimSpace(explicitTo))
+	if explicit == "" {
+		return true
+	}
+	switch explicit {
+	case "me", "myself", "grant", "grant foster":
+		return true
+	default:
+		return false
+	}
 }
 
 func (b *Bot) generateJoanneEmailBody(ctx context.Context, instruction, recipient string) (string, error) {
