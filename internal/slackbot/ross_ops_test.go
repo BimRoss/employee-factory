@@ -27,6 +27,25 @@ func TestResolveRossOpsAction_Extractor(t *testing.T) {
 	}
 }
 
+func TestResolveRossOpsAction_ExtractorMetrics(t *testing.T) {
+	extract := rossOpsActionExtract{
+		Intent:    "ops_query",
+		Operation: string(opsproxy.OperationK8sMetrics),
+		Namespace: "employee-factory",
+		Limit:     4,
+	}
+	action, matched, source := resolveRossOpsAction("cpu ram capacity metrics for kubernetes", extract, nil)
+	if !matched {
+		t.Fatalf("expected matched extractor action")
+	}
+	if source != "extractor" {
+		t.Fatalf("source mismatch: %q", source)
+	}
+	if action.Operation != opsproxy.OperationK8sMetrics {
+		t.Fatalf("operation mismatch: %q", action.Operation)
+	}
+}
+
 func TestResolveRossOpsAction_ParserFallback(t *testing.T) {
 	action, matched, source := resolveRossOpsAction("check kubernetes deployment/employee-factory-ross", rossOpsActionExtract{}, assertErrSentinel{})
 	if !matched {
@@ -90,6 +109,38 @@ func TestParseRossOpsAction_WaitlistEmailsWithoutRedisKeyword(t *testing.T) {
 	}
 	if action.Operation != opsproxy.OperationWaitlistEmails {
 		t.Fatalf("operation mismatch: %q", action.Operation)
+	}
+}
+
+func TestParseRossOpsAction_K8sMetrics(t *testing.T) {
+	action, matched := parseRossOpsAction("give me kubernetes cpu ram capacity metrics for admin cluster")
+	if !matched {
+		t.Fatalf("expected k8s metrics match")
+	}
+	if action.Operation != opsproxy.OperationK8sMetrics {
+		t.Fatalf("operation mismatch: %q", action.Operation)
+	}
+}
+
+func TestFormatRossMetrics_LiveUnavailable(t *testing.T) {
+	text := formatRossMetrics(opsproxy.MetricsResponse{
+		Namespace:            "employee-factory",
+		LiveMetricsAvailable: false,
+		LiveMetricsReason:    "metrics API unavailable",
+		Cluster: opsproxy.ClusterResourceTotals{
+			CPUCapacityMilli:       8000,
+			CPUAllocatableMilli:    7600,
+			CPURequestedMilli:      2400,
+			MemoryCapacityBytes:    16 * 1024 * 1024 * 1024,
+			MemoryAllocatableBytes: 15 * 1024 * 1024 * 1024,
+			MemoryRequestedBytes:   4 * 1024 * 1024 * 1024,
+		},
+	})
+	if !strings.Contains(text, "live usage unavailable") {
+		t.Fatalf("expected unavailable marker in output: %q", text)
+	}
+	if !strings.Contains(text, "cluster cpu cap=") {
+		t.Fatalf("expected cluster cpu summary in output: %q", text)
 	}
 }
 

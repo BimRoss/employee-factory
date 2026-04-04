@@ -14,6 +14,7 @@ import (
 	"github.com/redis/go-redis/v9"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -65,6 +66,7 @@ func (s *ProxyServer) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", s.handleHealth)
 	mux.HandleFunc("/k8s/status", s.requireAuth(s.handleK8sStatus))
+	mux.HandleFunc("/k8s/metrics", s.requireAuth(s.handleK8sMetrics))
 	mux.HandleFunc("/k8s/logs", s.requireAuth(s.handleK8sLogs))
 	mux.HandleFunc("/redis/read", s.requireAuth(s.handleRedisRead))
 	mux.HandleFunc("/redis/waitlist-emails", s.requireAuth(s.handleWaitlistEmails))
@@ -186,6 +188,205 @@ func (s *ProxyServer) readStatus(ctx context.Context, namespace, target string, 
 		out.Pods = append(out.Pods, mapPod(&pod))
 	}
 	return out, nil
+}
+
+func (s *ProxyServer) handleK8sMetrics(w http.ResponseWriter, r *http.Request) {
+	var req MetricsRequest
+	if err := decodeJSONBody(r, &req); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	req.Namespace = strings.TrimSpace(req.Namespace)
+	if req.Namespace != "" && !s.namespaceAllowed(req.Namespace) {
+		writeErr(w, http.StatusForbidden, "namespace not allowed")
+		return
+	}
+	if req.Namespace == "" {
+		req.Namespace = s.cfg.AllowedNamespaces[0]
+	}
+	limit := req.Limit
+	if limit <= 0 {
+		limit = s.cfg.DefaultStatusLimit
+	}
+	if limit > s.cfg.MaxStatusLimit {
+		limit = s.cfg.MaxStatusLimit
+	}
+	log.Printf("ops_proxy: request path=/k8s/metrics namespace=%s limit=%d", req.Namespace, limit)
+
+	ctx, cancel := context.WithTimeout(r.Context(), s.cfg.RequestTimeout)
+	defer cancel()
+
+	resp, err := s.readMetrics(ctx, req.Namespace, limit)
+	if err != nil {
+		log.Printf("ops_proxy: error path=/k8s/metrics err=%v", err)
+		writeErr(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func (s *ProxyServer) readMetrics(ctx context.Context, namespace string, limit int) (MetricsResponse, error) {
+	nodes, err := s.kube.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return MetricsResponse{}, fmt.Errorf("list nodes: %w", err)
+	}
+	pods, err := s.kube.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return MetricsResponse{}, fmt.Errorf("list pods: %w", err)
+	}
+
+	usageByNode, usageErr := s.readNodeUsageMetrics(ctx)
+	liveReason := ""
+	if usageErr != nil {
+		liveReason = usageErr.Error()
+	}
+
+	perNodeReq, perNodeLim := podResourceByNode(pods.Items)
+	nodeRows := summarizeNodeResources(nodes.Items, perNodeReq, perNodeLim, usageByNode)
+
+	cluster := ClusterResourceTotals{}
+	for _, row := range nodeRows {
+		cluster.CPUCapacityMilli += row.CPUCapacityMilli
+		cluster.CPUAllocatableMilli += row.CPUAllocatableMilli
+		cluster.CPURequestedMilli += row.CPURequestedMilli
+		cluster.CPULimitsMilli += row.CPULimitsMilli
+		cluster.CPUUsageMilli += row.CPUUsageMilli
+		cluster.MemoryCapacityBytes += row.MemoryCapacityBytes
+		cluster.MemoryAllocatableBytes += row.MemoryAllocatableBytes
+		cluster.MemoryRequestedBytes += row.MemoryRequestedBytes
+		cluster.MemoryLimitsBytes += row.MemoryLimitsBytes
+		cluster.MemoryUsageBytes += row.MemoryUsageBytes
+	}
+	sort.Slice(nodeRows, func(i, j int) bool { return nodeRows[i].NodeName < nodeRows[j].NodeName })
+	if len(nodeRows) > limit {
+		nodeRows = nodeRows[:limit]
+	}
+
+	return MetricsResponse{
+		Namespace:            namespace,
+		LiveMetricsAvailable: usageErr == nil,
+		LiveMetricsReason:    liveReason,
+		Cluster:              cluster,
+		Nodes:                nodeRows,
+	}, nil
+}
+
+func podResourceByNode(pods []corev1.Pod) (map[string]corev1.ResourceList, map[string]corev1.ResourceList) {
+	reqByNode := map[string]corev1.ResourceList{}
+	limByNode := map[string]corev1.ResourceList{}
+	for i := range pods {
+		pod := pods[i]
+		node := strings.TrimSpace(pod.Spec.NodeName)
+		if node == "" {
+			continue
+		}
+		if _, ok := reqByNode[node]; !ok {
+			reqByNode[node] = corev1.ResourceList{}
+			limByNode[node] = corev1.ResourceList{}
+		}
+		for _, ctr := range pod.Spec.Containers {
+			addResource(reqByNode[node], corev1.ResourceCPU, ctr.Resources.Requests.Cpu())
+			addResource(reqByNode[node], corev1.ResourceMemory, ctr.Resources.Requests.Memory())
+			addResource(limByNode[node], corev1.ResourceCPU, ctr.Resources.Limits.Cpu())
+			addResource(limByNode[node], corev1.ResourceMemory, ctr.Resources.Limits.Memory())
+		}
+	}
+	return reqByNode, limByNode
+}
+
+func summarizeNodeResources(
+	nodes []corev1.Node,
+	reqByNode map[string]corev1.ResourceList,
+	limByNode map[string]corev1.ResourceList,
+	usageByNode map[string]corev1.ResourceList,
+) []NodeResourceMetrics {
+	out := make([]NodeResourceMetrics, 0, len(nodes))
+	for i := range nodes {
+		node := nodes[i]
+		name := strings.TrimSpace(node.Name)
+		req := reqByNode[name]
+		lim := limByNode[name]
+		usage := usageByNode[name]
+		out = append(out, NodeResourceMetrics{
+			NodeName:               name,
+			CPUCapacityMilli:       quantityMilli(node.Status.Capacity.Cpu()),
+			CPUAllocatableMilli:    quantityMilli(node.Status.Allocatable.Cpu()),
+			CPURequestedMilli:      quantityMilli(req.Cpu()),
+			CPULimitsMilli:         quantityMilli(lim.Cpu()),
+			CPUUsageMilli:          quantityMilli(usage.Cpu()),
+			MemoryCapacityBytes:    quantityBytes(node.Status.Capacity.Memory()),
+			MemoryAllocatableBytes: quantityBytes(node.Status.Allocatable.Memory()),
+			MemoryRequestedBytes:   quantityBytes(req.Memory()),
+			MemoryLimitsBytes:      quantityBytes(lim.Memory()),
+			MemoryUsageBytes:       quantityBytes(usage.Memory()),
+		})
+	}
+	return out
+}
+
+func addResource(target corev1.ResourceList, key corev1.ResourceName, q *resource.Quantity) {
+	if q == nil {
+		return
+	}
+	current, ok := target[key]
+	if !ok {
+		target[key] = q.DeepCopy()
+		return
+	}
+	current.Add(*q)
+	target[key] = current
+}
+
+func quantityMilli(q *resource.Quantity) int64 {
+	if q == nil {
+		return 0
+	}
+	return q.MilliValue()
+}
+
+func quantityBytes(q *resource.Quantity) int64 {
+	if q == nil {
+		return 0
+	}
+	return q.Value()
+}
+
+func (s *ProxyServer) readNodeUsageMetrics(ctx context.Context) (map[string]corev1.ResourceList, error) {
+	raw, err := s.kube.Discovery().RESTClient().Get().AbsPath("/apis/metrics.k8s.io/v1beta1/nodes").DoRaw(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("metrics API unavailable: %w", err)
+	}
+	type nodeMetricsItem struct {
+		Metadata struct {
+			Name string `json:"name"`
+		} `json:"metadata"`
+		Usage map[string]string `json:"usage"`
+	}
+	type nodeMetricsList struct {
+		Items []nodeMetricsItem `json:"items"`
+	}
+	var parsed nodeMetricsList
+	if err := json.Unmarshal(raw, &parsed); err != nil {
+		return nil, fmt.Errorf("decode metrics API response: %w", err)
+	}
+	usageByNode := make(map[string]corev1.ResourceList, len(parsed.Items))
+	for _, item := range parsed.Items {
+		nodeName := strings.TrimSpace(item.Metadata.Name)
+		if nodeName == "" {
+			continue
+		}
+		nodeUsage := corev1.ResourceList{}
+		for rk, rv := range item.Usage {
+			key := corev1.ResourceName(strings.TrimSpace(rk))
+			q, err := resource.ParseQuantity(strings.TrimSpace(rv))
+			if err != nil {
+				continue
+			}
+			nodeUsage[key] = q
+		}
+		usageByNode[nodeName] = nodeUsage
+	}
+	return usageByNode, nil
 }
 
 func (s *ProxyServer) podsForDeployment(ctx context.Context, namespace string, dep *appsv1.Deployment, limit int) ([]corev1.Pod, error) {

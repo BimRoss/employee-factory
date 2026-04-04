@@ -46,6 +46,14 @@ func (c *Client) Status(ctx context.Context, req StatusRequest) (StatusResponse,
 	return out, nil
 }
 
+func (c *Client) Metrics(ctx context.Context, req MetricsRequest) (MetricsResponse, error) {
+	var out MetricsResponse
+	if err := c.postJSON(ctx, "/k8s/metrics", req, &out); err != nil {
+		return MetricsResponse{}, err
+	}
+	return out, nil
+}
+
 func (c *Client) Logs(ctx context.Context, req LogsRequest) (LogsResponse, error) {
 	var out LogsResponse
 	if err := c.postJSON(ctx, "/k8s/logs", req, &out); err != nil {

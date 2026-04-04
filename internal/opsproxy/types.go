@@ -4,6 +4,7 @@ type Operation string
 
 const (
 	OperationK8sStatus      Operation = "k8s_status"
+	OperationK8sMetrics     Operation = "k8s_metrics"
 	OperationK8sLogs        Operation = "k8s_logs"
 	OperationRedisRead      Operation = "redis_read"
 	OperationWaitlistEmails Operation = "waitlist_emails"
@@ -40,6 +41,46 @@ type StatusResponse struct {
 	Target      string             `json:"target,omitempty"`
 	Deployments []DeploymentStatus `json:"deployments,omitempty"`
 	Pods        []PodStatus        `json:"pods,omitempty"`
+}
+
+type MetricsRequest struct {
+	Namespace string `json:"namespace,omitempty"`
+	Limit     int    `json:"limit,omitempty"`
+}
+
+type ClusterResourceTotals struct {
+	CPUCapacityMilli       int64 `json:"cpu_capacity_milli"`
+	CPUAllocatableMilli    int64 `json:"cpu_allocatable_milli"`
+	CPURequestedMilli      int64 `json:"cpu_requested_milli"`
+	CPULimitsMilli         int64 `json:"cpu_limits_milli"`
+	CPUUsageMilli          int64 `json:"cpu_usage_milli"`
+	MemoryCapacityBytes    int64 `json:"memory_capacity_bytes"`
+	MemoryAllocatableBytes int64 `json:"memory_allocatable_bytes"`
+	MemoryRequestedBytes   int64 `json:"memory_requested_bytes"`
+	MemoryLimitsBytes      int64 `json:"memory_limits_bytes"`
+	MemoryUsageBytes       int64 `json:"memory_usage_bytes"`
+}
+
+type NodeResourceMetrics struct {
+	NodeName               string `json:"node_name"`
+	CPUCapacityMilli       int64  `json:"cpu_capacity_milli"`
+	CPUAllocatableMilli    int64  `json:"cpu_allocatable_milli"`
+	CPURequestedMilli      int64  `json:"cpu_requested_milli"`
+	CPULimitsMilli         int64  `json:"cpu_limits_milli"`
+	CPUUsageMilli          int64  `json:"cpu_usage_milli"`
+	MemoryCapacityBytes    int64  `json:"memory_capacity_bytes"`
+	MemoryAllocatableBytes int64  `json:"memory_allocatable_bytes"`
+	MemoryRequestedBytes   int64  `json:"memory_requested_bytes"`
+	MemoryLimitsBytes      int64  `json:"memory_limits_bytes"`
+	MemoryUsageBytes       int64  `json:"memory_usage_bytes"`
+}
+
+type MetricsResponse struct {
+	Namespace            string                `json:"namespace,omitempty"`
+	LiveMetricsAvailable bool                  `json:"live_metrics_available"`
+	LiveMetricsReason    string                `json:"live_metrics_reason,omitempty"`
+	Cluster              ClusterResourceTotals `json:"cluster"`
+	Nodes                []NodeResourceMetrics `json:"nodes,omitempty"`
 }
 
 type LogsRequest struct {

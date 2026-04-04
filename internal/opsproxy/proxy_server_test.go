@@ -1,6 +1,12 @@
 package opsproxy
 
-import "testing"
+import (
+	"testing"
+
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+)
 
 func TestRedisPrefixAllowed(t *testing.T) {
 	s := &ProxyServer{
@@ -53,5 +59,103 @@ func TestResolveWaitlistPrefixes_ExplicitAllowed(t *testing.T) {
 	}
 	if len(prefixes) != 1 || prefixes[0] != "waitlist:" {
 		t.Fatalf("unexpected explicit prefixes result: %#v", prefixes)
+	}
+}
+
+func TestPodResourceByNode(t *testing.T) {
+	pods := []corev1.Pod{
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "p1"},
+			Spec: corev1.PodSpec{
+				NodeName: "node-a",
+				Containers: []corev1.Container{
+					{
+						Resources: corev1.ResourceRequirements{
+							Requests: corev1.ResourceList{
+								corev1.ResourceCPU:    resource.MustParse("250m"),
+								corev1.ResourceMemory: resource.MustParse("256Mi"),
+							},
+							Limits: corev1.ResourceList{
+								corev1.ResourceCPU:    resource.MustParse("500m"),
+								corev1.ResourceMemory: resource.MustParse("512Mi"),
+							},
+						},
+					},
+				},
+			},
+		},
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "p2"},
+			Spec: corev1.PodSpec{
+				NodeName: "node-a",
+				Containers: []corev1.Container{
+					{
+						Resources: corev1.ResourceRequirements{
+							Requests: corev1.ResourceList{
+								corev1.ResourceCPU: resource.MustParse("100m"),
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+	reqByNode, limByNode := podResourceByNode(pods)
+	reqCPU := reqByNode["node-a"][corev1.ResourceCPU]
+	if got := (&reqCPU).MilliValue(); got != 350 {
+		t.Fatalf("cpu requests mismatch: got=%d want=350", got)
+	}
+	limCPU := limByNode["node-a"][corev1.ResourceCPU]
+	if got := (&limCPU).MilliValue(); got != 500 {
+		t.Fatalf("cpu limits mismatch: got=%d want=500", got)
+	}
+}
+
+func TestSummarizeNodeResources(t *testing.T) {
+	nodes := []corev1.Node{
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "node-a"},
+			Status: corev1.NodeStatus{
+				Capacity: corev1.ResourceList{
+					corev1.ResourceCPU:    resource.MustParse("4"),
+					corev1.ResourceMemory: resource.MustParse("8Gi"),
+				},
+				Allocatable: corev1.ResourceList{
+					corev1.ResourceCPU:    resource.MustParse("3800m"),
+					corev1.ResourceMemory: resource.MustParse("7600Mi"),
+				},
+			},
+		},
+	}
+	reqByNode := map[string]corev1.ResourceList{
+		"node-a": {
+			corev1.ResourceCPU:    resource.MustParse("1200m"),
+			corev1.ResourceMemory: resource.MustParse("2Gi"),
+		},
+	}
+	limByNode := map[string]corev1.ResourceList{
+		"node-a": {
+			corev1.ResourceCPU:    resource.MustParse("2400m"),
+			corev1.ResourceMemory: resource.MustParse("4Gi"),
+		},
+	}
+	usageByNode := map[string]corev1.ResourceList{
+		"node-a": {
+			corev1.ResourceCPU:    resource.MustParse("800m"),
+			corev1.ResourceMemory: resource.MustParse("1536Mi"),
+		},
+	}
+	rows := summarizeNodeResources(nodes, reqByNode, limByNode, usageByNode)
+	if len(rows) != 1 {
+		t.Fatalf("expected one node row, got %d", len(rows))
+	}
+	if rows[0].CPUUsageMilli != 800 {
+		t.Fatalf("cpu usage mismatch: got=%d want=800", rows[0].CPUUsageMilli)
+	}
+	if rows[0].CPURequestedMilli != 1200 {
+		t.Fatalf("cpu requested mismatch: got=%d want=1200", rows[0].CPURequestedMilli)
+	}
+	if rows[0].MemoryUsageBytes <= 0 {
+		t.Fatalf("expected memory usage bytes > 0")
 	}
 }

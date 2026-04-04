@@ -53,7 +53,7 @@ func rossOpsActionSchema() jsonschema.Definition {
 			},
 			"operation": {
 				Type:        jsonschema.String,
-				Enum:        []string{string(opsproxy.OperationK8sStatus), string(opsproxy.OperationK8sLogs), string(opsproxy.OperationRedisRead), string(opsproxy.OperationWaitlistEmails)},
+				Enum:        []string{string(opsproxy.OperationK8sStatus), string(opsproxy.OperationK8sMetrics), string(opsproxy.OperationK8sLogs), string(opsproxy.OperationRedisRead), string(opsproxy.OperationWaitlistEmails)},
 				Description: "Desired read-only operation.",
 			},
 			"namespace": {
@@ -161,7 +161,7 @@ func resolveRossOpsAction(raw string, extract rossOpsActionExtract, extractErr e
 			}
 			return action, true, "extractor_waitlist_override"
 		}
-		if action.Operation == opsproxy.OperationK8sStatus || action.Operation == opsproxy.OperationK8sLogs || action.Operation == opsproxy.OperationRedisRead || action.Operation == opsproxy.OperationWaitlistEmails {
+		if action.Operation == opsproxy.OperationK8sStatus || action.Operation == opsproxy.OperationK8sMetrics || action.Operation == opsproxy.OperationK8sLogs || action.Operation == opsproxy.OperationRedisRead || action.Operation == opsproxy.OperationWaitlistEmails {
 			return action, true, "extractor"
 		}
 	}
@@ -199,6 +199,11 @@ func parseRossOpsAction(raw string) (rossOpsAction, bool) {
 		action.TailLines = 200
 		return action, true
 	}
+	if isK8sMetricsPrompt(text) {
+		action.Operation = opsproxy.OperationK8sMetrics
+		action.Limit = 8
+		return action, true
+	}
 	if strings.Contains(text, "kubernetes") || strings.Contains(text, "server") || strings.Contains(text, "deployed") || strings.Contains(text, "deployment") || strings.Contains(text, "pods") {
 		action.Operation = opsproxy.OperationK8sStatus
 		action.Target = parseTargetHint(text)
@@ -230,13 +235,23 @@ func isWaitlistEmailPrompt(raw string) bool {
 	return strings.Contains(text, "waitlist") && (strings.Contains(text, "email") || strings.Contains(text, "emails"))
 }
 
+func isK8sMetricsPrompt(raw string) bool {
+	text := strings.ToLower(strings.TrimSpace(raw))
+	if text == "" {
+		return false
+	}
+	hasResourceSignal := strings.Contains(text, "cpu") || strings.Contains(text, "ram") || strings.Contains(text, "memory")
+	hasInfraSignal := strings.Contains(text, "kubernetes") || strings.Contains(text, "cluster") || strings.Contains(text, "node") || strings.Contains(text, "capacity") || strings.Contains(text, "usage") || strings.Contains(text, "metric")
+	return hasResourceSignal && hasInfraSignal
+}
+
 func (b *Bot) extractRossOpsAction(ctx context.Context, cmdText string) (rossOpsActionExtract, error) {
 	var out rossOpsActionExtract
 	extractCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
 
 	systemPrompt := "You classify whether a Slack message is a Ross operations data request. Respond only with schema-compliant JSON."
-	userPrompt := "Message:\n" + strings.TrimSpace(cmdText) + "\n\nRules:\n- intent=ops_query only for explicit requests to inspect infrastructure/cache state.\n- operation must be one of k8s_status, k8s_logs, redis_read, waitlist_emails.\n- If user asks for waitlist emails, use waitlist_emails.\n- If unsure, use intent=none.\n- Never invent namespaces, targets, keys, or logs."
+	userPrompt := "Message:\n" + strings.TrimSpace(cmdText) + "\n\nRules:\n- intent=ops_query only for explicit requests to inspect infrastructure/cache state.\n- operation must be one of k8s_status, k8s_metrics, k8s_logs, redis_read, waitlist_emails.\n- If user asks for CPU, RAM, or memory capacity/usage in Kubernetes, use k8s_metrics.\n- If user asks for waitlist emails, use waitlist_emails.\n- If unsure, use intent=none.\n- Never invent namespaces, targets, keys, or logs."
 	err := b.llm.ExtractStructured(extractCtx, systemPrompt, userPrompt, rossOpsActionSchema(), &out, "ross_ops_query")
 	if err != nil {
 		return rossOpsActionExtract{}, err
@@ -295,6 +310,17 @@ func (b *Bot) handleRossOps(parent context.Context, channel, requestUserID, thre
 			return
 		}
 		b.postRossOpsStatus(ctx, channel, threadTS, formatRossStatus(resp))
+	case opsproxy.OperationK8sMetrics:
+		log.Printf("ross_ops: execute operation=%s namespace=%s limit=%d", action.Operation, namespace, action.Limit)
+		resp, err := b.opsProxyClient.Metrics(ctx, opsproxy.MetricsRequest{
+			Namespace: namespace,
+			Limit:     action.Limit,
+		})
+		if err != nil {
+			b.postRossOpsStatus(ctx, channel, threadTS, "I could not fetch Kubernetes CPU/RAM metrics from the ops proxy.")
+			return
+		}
+		b.postRossOpsStatus(ctx, channel, threadTS, formatRossMetrics(resp))
 	case opsproxy.OperationK8sLogs:
 		log.Printf("ross_ops: execute operation=%s namespace=%s target=%s", action.Operation, namespace, strings.TrimSpace(action.Target))
 		resp, err := b.opsProxyClient.Logs(ctx, opsproxy.LogsRequest{
@@ -352,7 +378,7 @@ func (b *Bot) handleRossOps(parent context.Context, channel, requestUserID, thre
 		}
 		b.postRossOpsStatus(ctx, channel, threadTS, formatRossWaitlistEmails(resp, action.RevealFull))
 	default:
-		b.postRossOpsStatus(ctx, channel, threadTS, "I can run `k8s_status`, `k8s_logs`, `redis_read`, or `waitlist_emails` once the request is specific.")
+		b.postRossOpsStatus(ctx, channel, threadTS, "I can run `k8s_status`, `k8s_metrics`, `k8s_logs`, `redis_read`, or `waitlist_emails` once the request is specific.")
 	}
 }
 
@@ -401,6 +427,33 @@ func formatRossWaitlistEmails(resp opsproxy.WaitlistEmailsResponse, revealFull b
 		lines = append(lines, fmt.Sprintf("- `%s`", strings.TrimSpace(item.Email)))
 	}
 	return strings.Join(lines, "\n")
+}
+
+func formatRossMetrics(resp opsproxy.MetricsResponse) string {
+	lines := []string{fmt.Sprintf("Kubernetes CPU/RAM metrics `%s`", strings.TrimSpace(resp.Namespace))}
+	lines = append(lines, fmt.Sprintf("- cluster cpu cap=%.2f cores alloc=%.2f req=%.2f lim=%.2f usage=%.2f", milliToCores(resp.Cluster.CPUCapacityMilli), milliToCores(resp.Cluster.CPUAllocatableMilli), milliToCores(resp.Cluster.CPURequestedMilli), milliToCores(resp.Cluster.CPULimitsMilli), milliToCores(resp.Cluster.CPUUsageMilli)))
+	lines = append(lines, fmt.Sprintf("- cluster mem cap=%.2f Gi alloc=%.2f Gi req=%.2f Gi lim=%.2f Gi usage=%.2f Gi", bytesToGi(resp.Cluster.MemoryCapacityBytes), bytesToGi(resp.Cluster.MemoryAllocatableBytes), bytesToGi(resp.Cluster.MemoryRequestedBytes), bytesToGi(resp.Cluster.MemoryLimitsBytes), bytesToGi(resp.Cluster.MemoryUsageBytes)))
+	if resp.LiveMetricsAvailable {
+		lines = append(lines, "- live usage source=metrics.k8s.io")
+	} else {
+		reason := strings.TrimSpace(resp.LiveMetricsReason)
+		if reason == "" {
+			reason = "metrics API unavailable"
+		}
+		lines = append(lines, fmt.Sprintf("- live usage unavailable: %s", reason))
+	}
+	for _, node := range resp.Nodes {
+		lines = append(lines, fmt.Sprintf("- node/%s cpu alloc=%.2f req=%.2f usage=%.2f mem alloc=%.2fGi req=%.2fGi usage=%.2fGi", node.NodeName, milliToCores(node.CPUAllocatableMilli), milliToCores(node.CPURequestedMilli), milliToCores(node.CPUUsageMilli), bytesToGi(node.MemoryAllocatableBytes), bytesToGi(node.MemoryRequestedBytes), bytesToGi(node.MemoryUsageBytes)))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func milliToCores(v int64) float64 {
+	return float64(v) / 1000.0
+}
+
+func bytesToGi(v int64) float64 {
+	return float64(v) / (1024.0 * 1024.0 * 1024.0)
 }
 
 func (b *Bot) postRossOpsStatus(ctx context.Context, channel, threadTS, text string) {
