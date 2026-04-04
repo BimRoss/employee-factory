@@ -86,6 +86,7 @@ func (s *ProxyServer) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 		}
 		token := strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer"))
 		if subtleTrim(token) != subtleTrim(s.cfg.AuthToken) {
+			log.Printf("ops_proxy: unauthorized path=%s", r.URL.Path)
 			writeErr(w, http.StatusUnauthorized, "unauthorized")
 			return
 		}
@@ -118,12 +119,14 @@ func (s *ProxyServer) handleK8sStatus(w http.ResponseWriter, r *http.Request) {
 	if limit > s.cfg.MaxStatusLimit {
 		limit = s.cfg.MaxStatusLimit
 	}
+	log.Printf("ops_proxy: request path=/k8s/status namespace=%s target=%s limit=%d", req.Namespace, strings.TrimSpace(req.Target), limit)
 
 	ctx, cancel := context.WithTimeout(r.Context(), s.cfg.RequestTimeout)
 	defer cancel()
 
 	resp, err := s.readStatus(ctx, req.Namespace, strings.TrimSpace(req.Target), limit)
 	if err != nil {
+		log.Printf("ops_proxy: error path=/k8s/status err=%v", err)
 		writeErr(w, http.StatusBadGateway, err.Error())
 		return
 	}
@@ -236,11 +239,13 @@ func (s *ProxyServer) handleK8sLogs(w http.ResponseWriter, r *http.Request) {
 	if since < 0 {
 		since = 0
 	}
+	log.Printf("ops_proxy: request path=/k8s/logs namespace=%s target=%s tail=%d since=%d", ns, target, tail, since)
 
 	ctx, cancel := context.WithTimeout(r.Context(), s.cfg.RequestTimeout)
 	defer cancel()
 	lines, resolvedTarget, truncated, err := s.readLogs(ctx, ns, target, strings.TrimSpace(req.Container), tail, since)
 	if err != nil {
+		log.Printf("ops_proxy: error path=/k8s/logs err=%v", err)
 		writeErr(w, http.StatusBadGateway, err.Error())
 		return
 	}
@@ -317,12 +322,14 @@ func (s *ProxyServer) handleRedisRead(w http.ResponseWriter, r *http.Request) {
 	if limit > s.cfg.MaxRedisLimit {
 		limit = s.cfg.MaxRedisLimit
 	}
+	log.Printf("ops_proxy: request path=/redis/read key=%s prefix=%s limit=%d", key, prefix, limit)
 
 	ctx, cancel := context.WithTimeout(r.Context(), s.cfg.RequestTimeout)
 	defer cancel()
 
 	resp, err := s.readRedis(ctx, key, prefix, limit)
 	if err != nil {
+		log.Printf("ops_proxy: error path=/redis/read err=%v", err)
 		writeErr(w, http.StatusBadGateway, err.Error())
 		return
 	}
@@ -354,10 +361,12 @@ func (s *ProxyServer) handleWaitlistEmails(w http.ResponseWriter, r *http.Reques
 	if limit > s.cfg.MaxWaitlistLimit {
 		limit = s.cfg.MaxWaitlistLimit
 	}
+	log.Printf("ops_proxy: request path=/redis/waitlist-emails prefix=%s limit=%d reveal_full=%t", prefix, limit, req.RevealFull)
 	ctx, cancel := context.WithTimeout(r.Context(), s.cfg.RequestTimeout)
 	defer cancel()
 	resp, err := s.readWaitlistEmails(ctx, prefix, limit, req.RevealFull)
 	if err != nil {
+		log.Printf("ops_proxy: error path=/redis/waitlist-emails err=%v", err)
 		writeErr(w, http.StatusBadGateway, err.Error())
 		return
 	}

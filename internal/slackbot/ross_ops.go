@@ -139,6 +139,7 @@ func (b *Bot) tryHandleRossOps(ctx context.Context, channel, rawText, requestUse
 }
 
 func resolveRossOpsAction(raw string, extract rossOpsActionExtract, extractErr error) (rossOpsAction, bool, string) {
+	waitlistPrompt := isWaitlistEmailPrompt(raw)
 	if extractErr == nil && strings.EqualFold(strings.TrimSpace(extract.Intent), "ops_query") {
 		action := rossOpsAction{
 			Operation:    opsproxy.Operation(strings.TrimSpace(extract.Operation)),
@@ -151,6 +152,14 @@ func resolveRossOpsAction(raw string, extract rossOpsActionExtract, extractErr e
 			SinceSeconds: extract.SinceSeconds,
 			Limit:        extract.Limit,
 			RevealFull:   extract.RevealFull,
+		}
+		// Guardrail: waitlist-email asks should never fall through as k8s status.
+		if waitlistPrompt {
+			action.Operation = opsproxy.OperationWaitlistEmails
+			if action.Limit <= 0 {
+				action.Limit = 100
+			}
+			return action, true, "extractor_waitlist_override"
 		}
 		if action.Operation == opsproxy.OperationK8sStatus || action.Operation == opsproxy.OperationK8sLogs || action.Operation == opsproxy.OperationRedisRead || action.Operation == opsproxy.OperationWaitlistEmails {
 			return action, true, "extractor"
@@ -168,13 +177,13 @@ func parseRossOpsAction(raw string) (rossOpsAction, bool) {
 		return rossOpsAction{}, false
 	}
 	action := rossOpsAction{}
+	if isWaitlistEmailPrompt(text) {
+		action.Operation = opsproxy.OperationWaitlistEmails
+		action.Limit = 100
+		action.RevealFull = strings.Contains(text, "full") || strings.Contains(text, "unmask")
+		return action, true
+	}
 	if strings.Contains(text, "redis") || strings.Contains(text, "cache key") || strings.Contains(text, "cache") {
-		if strings.Contains(text, "waitlist") && strings.Contains(text, "email") {
-			action.Operation = opsproxy.OperationWaitlistEmails
-			action.Limit = 100
-			action.RevealFull = strings.Contains(text, "full") || strings.Contains(text, "unmask")
-			return action, true
-		}
 		action.Operation = opsproxy.OperationRedisRead
 		if idx := strings.Index(text, "key "); idx >= 0 {
 			action.RedisKey = strings.TrimSpace(raw[idx+len("key "):])
@@ -211,6 +220,14 @@ func parseTargetHint(text string) string {
 		}
 	}
 	return ""
+}
+
+func isWaitlistEmailPrompt(raw string) bool {
+	text := strings.ToLower(strings.TrimSpace(raw))
+	if text == "" {
+		return false
+	}
+	return strings.Contains(text, "waitlist") && (strings.Contains(text, "email") || strings.Contains(text, "emails"))
 }
 
 func (b *Bot) extractRossOpsAction(ctx context.Context, cmdText string) (rossOpsActionExtract, error) {
@@ -267,6 +284,7 @@ func (b *Bot) handleRossOps(parent context.Context, channel, requestUserID, thre
 	}
 	switch action.Operation {
 	case opsproxy.OperationK8sStatus:
+		log.Printf("ross_ops: execute operation=%s namespace=%s target=%s", action.Operation, namespace, strings.TrimSpace(action.Target))
 		resp, err := b.opsProxyClient.Status(ctx, opsproxy.StatusRequest{
 			Namespace: namespace,
 			Target:    action.Target,
@@ -278,6 +296,7 @@ func (b *Bot) handleRossOps(parent context.Context, channel, requestUserID, thre
 		}
 		b.postRossOpsStatus(ctx, channel, threadTS, formatRossStatus(resp))
 	case opsproxy.OperationK8sLogs:
+		log.Printf("ross_ops: execute operation=%s namespace=%s target=%s", action.Operation, namespace, strings.TrimSpace(action.Target))
 		resp, err := b.opsProxyClient.Logs(ctx, opsproxy.LogsRequest{
 			Namespace:    namespace,
 			Target:       action.Target,
@@ -298,6 +317,7 @@ func (b *Bot) handleRossOps(parent context.Context, channel, requestUserID, thre
 		}
 		b.postRossOpsStatus(ctx, channel, threadTS, fmt.Sprintf("Logs `%s` in `%s`:\n```%s```", resp.Target, resp.Namespace, text))
 	case opsproxy.OperationRedisRead:
+		log.Printf("ross_ops: execute operation=%s key=%s prefix=%s", action.Operation, strings.TrimSpace(action.RedisKey), strings.TrimSpace(action.RedisPrefix))
 		if action.RedisKey != "" && !prefixAllowed(action.RedisKey, b.cfg.RossOpsAllowedRedisPrefixes) {
 			b.postRossOpsStatus(ctx, channel, threadTS, "That redis key is outside the Ross ops allowlist.")
 			return
@@ -317,6 +337,7 @@ func (b *Bot) handleRossOps(parent context.Context, channel, requestUserID, thre
 		}
 		b.postRossOpsStatus(ctx, channel, threadTS, formatRossRedis(resp))
 	case opsproxy.OperationWaitlistEmails:
+		log.Printf("ross_ops: execute operation=%s requester=%s limit=%d reveal_full=%t", action.Operation, strings.TrimSpace(requestUserID), action.Limit, action.RevealFull)
 		if strings.TrimSpace(requestUserID) != strings.TrimSpace(b.cfg.ChatAllowedUserID) {
 			b.postRossOpsStatus(ctx, channel, threadTS, "I can only return waitlist emails for the authorized operator.")
 			return

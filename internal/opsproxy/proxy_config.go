@@ -44,7 +44,7 @@ func LoadProxyConfigFromEnv() (*ProxyConfig, error) {
 		DefaultLogTailLines:  parseInt64EnvMin("OPS_PROXY_DEFAULT_LOG_TAIL_LINES", 200, 1),
 		MaxLogTailLines:      parseInt64EnvMin("OPS_PROXY_MAX_LOG_TAIL_LINES", 500, 1),
 		MaxLogBytes:          parseIntEnvMin("OPS_PROXY_MAX_LOG_BYTES", 20000, 1024),
-		RequestTimeout:       time.Duration(parseIntEnvMin("OPS_PROXY_REQUEST_TIMEOUT_SEC", 15, 1)) * time.Second,
+		RequestTimeout:       time.Duration(parseIntEnvMin("OPS_PROXY_REQUEST_TIMEOUT_SEC", 30, 1)) * time.Second,
 	}
 	if cfg.MaxStatusLimit < cfg.DefaultStatusLimit {
 		cfg.MaxStatusLimit = cfg.DefaultStatusLimit

@@ -106,6 +106,7 @@ Ross can service prompts like “check what’s deployed”, “kubernetes logs�
 - `OPS_PROXY_ALLOWED_NAMESPACES` (comma-separated namespace allowlist)
 - `OPS_PROXY_ALLOWED_REDIS_PREFIXES` (comma-separated key-prefix allowlist)
 - `OPS_PROXY_WAITLIST_PREFIXES` (comma-separated prefix allowlist specifically used by waitlist email extraction)
+- `REDIS_URL` should point at the Redis instance that actually stores waitlist data (for BimRoss production this is `makeacompany-ai-redis`).
 
 The secret sync script writes both `ROSS_OPS_PROXY_TOKEN` and `OPS_PROXY_AUTH_TOKEN` so Ross and the proxy can share one token source from `employee-factory-ross-runtime`.
 
