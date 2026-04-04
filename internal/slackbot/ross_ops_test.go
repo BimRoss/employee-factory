@@ -39,6 +39,23 @@ func TestResolveRossOpsAction_ParserFallback(t *testing.T) {
 	}
 }
 
+func TestResolveRossOpsAction_WaitlistOverride(t *testing.T) {
+	extract := rossOpsActionExtract{
+		Intent:    "ops_query",
+		Operation: string(opsproxy.OperationK8sStatus),
+	}
+	action, matched, source := resolveRossOpsAction("emails of people on waitlist on the server", extract, nil)
+	if !matched {
+		t.Fatalf("expected override match")
+	}
+	if source != "extractor_waitlist_override" {
+		t.Fatalf("source mismatch: %q", source)
+	}
+	if action.Operation != opsproxy.OperationWaitlistEmails {
+		t.Fatalf("operation mismatch: %q", action.Operation)
+	}
+}
+
 func TestParseRossOpsAction_RedisDefaultPrefix(t *testing.T) {
 	action, matched := parseRossOpsAction("check redis cache")
 	if !matched {
@@ -62,5 +79,15 @@ func TestParseRossOpsAction_WaitlistEmails(t *testing.T) {
 	}
 	if !action.RevealFull {
 		t.Fatalf("expected reveal_full to be true")
+	}
+}
+
+func TestParseRossOpsAction_WaitlistEmailsWithoutRedisKeyword(t *testing.T) {
+	action, matched := parseRossOpsAction("show waitlist emails on the server")
+	if !matched {
+		t.Fatalf("expected waitlist match")
+	}
+	if action.Operation != opsproxy.OperationWaitlistEmails {
+		t.Fatalf("operation mismatch: %q", action.Operation)
 	}
 }
