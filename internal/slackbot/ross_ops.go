@@ -128,6 +128,10 @@ func (b *Bot) tryHandleRossOps(ctx context.Context, channel, rawText, requestUse
 	if !b.cfg.RossOpsEnabled || !strings.EqualFold(strings.TrimSpace(b.cfg.EmployeeID), "ross") {
 		return false
 	}
+	if !shouldHandleTargetedSquadMessage(rawText, b.cfg, "ross") {
+		log.Printf("ross_ops: skip message_ts=%s reason=targeted_to_other_employee", strings.TrimSpace(messageTS))
+		return false
+	}
 	cmd := strings.TrimSpace(rawText)
 	if b.botUserID != "" {
 		cmd = strings.TrimSpace(strings.ReplaceAll(cmd, "<@"+b.botUserID+">", ""))

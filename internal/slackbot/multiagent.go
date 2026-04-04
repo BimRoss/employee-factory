@@ -48,6 +48,31 @@ func mentionedSquadKeys(rawText string, cfg *config.Config) []string {
 	return out
 }
 
+func containsSquadKey(keys []string, want string) bool {
+	needle := strings.ToLower(strings.TrimSpace(want))
+	if needle == "" {
+		return false
+	}
+	for _, key := range keys {
+		if strings.ToLower(strings.TrimSpace(key)) == needle {
+			return true
+		}
+	}
+	return false
+}
+
+// shouldHandleTargetedSquadMessage gates specialist handlers (Ross ops, Joanne email, etc.)
+// so they do not hijack messages explicitly aimed at another employee.
+// Returns true when no squad mention exists (open command) or when the current employee is
+// explicitly mentioned.
+func shouldHandleTargetedSquadMessage(rawText string, cfg *config.Config, employeeKey string) bool {
+	mentioned := mentionedSquadKeys(rawText, cfg)
+	if len(mentioned) == 0 {
+		return true
+	}
+	return containsSquadKey(mentioned, employeeKey)
+}
+
 func parseMentionedUserIDs(text string) []string {
 	matches := reSlackUserMention.FindAllStringSubmatch(text, -1)
 	var out []string

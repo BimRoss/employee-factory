@@ -76,6 +76,10 @@ func (b *Bot) tryHandleJoanneSendEmail(ctx context.Context, channel, rawText, re
 	if !strings.EqualFold(strings.TrimSpace(b.cfg.EmployeeID), "joanne") {
 		return false
 	}
+	if !shouldHandleTargetedSquadMessage(rawText, b.cfg, "joanne") {
+		log.Printf("joanne_email: skip message_ts=%s reason=targeted_to_other_employee", strings.TrimSpace(messageTS))
+		return false
+	}
 	cmdText := strings.TrimSpace(rawText)
 	if b.botUserID != "" {
 		cmdText = strings.TrimSpace(strings.ReplaceAll(cmdText, "<@"+b.botUserID+">", ""))

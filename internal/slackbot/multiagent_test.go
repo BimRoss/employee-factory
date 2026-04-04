@@ -52,6 +52,19 @@ func TestMentionedSquadKeys_order(t *testing.T) {
 	}
 }
 
+func TestShouldHandleTargetedSquadMessage(t *testing.T) {
+	cfg := testCfgSquad()
+	if !shouldHandleTargetedSquadMessage("quick take please", cfg, "ross") {
+		t.Fatal("expected open message without mentions to be eligible")
+	}
+	if shouldHandleTargetedSquadMessage("hey <@UALEX003> what do you think?", cfg, "ross") {
+		t.Fatal("expected ross to ignore messages explicitly targeted to alex")
+	}
+	if !shouldHandleTargetedSquadMessage("hey <@UROSS001> check this", cfg, "ross") {
+		t.Fatal("expected ross to handle messages explicitly targeted to ross")
+	}
+}
+
 func TestBuildSlots_rounds(t *testing.T) {
 	cfg := testCfgSquad()
 	participants := []string{"ross", "tim"}
