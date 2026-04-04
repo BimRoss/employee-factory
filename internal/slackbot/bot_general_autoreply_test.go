@@ -1,10 +1,12 @@
 package slackbot
 
 import (
+	"context"
 	"testing"
 	"time"
 
 	"github.com/bimross/employee-factory/internal/config"
+	"github.com/slack-go/slack/slackevents"
 )
 
 func TestGeneralAutoReactionEligible_grantOnly(t *testing.T) {
@@ -41,6 +43,32 @@ func TestGeneralAutoReactionEligible_channelGate(t *testing.T) {
 	}
 	if generalAutoReactionEligible(cfg, "CRANDOM", "UGRANT") {
 		t.Fatal("expected non-general channel to be ineligible")
+	}
+}
+
+func TestDispatchGeneralAutoReaction_SkipsThreadMessages(t *testing.T) {
+	b := &Bot{
+		cfg: &config.Config{
+			EmployeeID:                           "ross",
+			MultiagentEnabled:                    true,
+			MultiagentGeneralAutoReactionEnabled: true,
+			SlackGeneralChannelID:                "CGENERAL",
+			ChatAllowedUserID:                    "UGRANT",
+			MultiagentBotUserIDs: map[string]string{
+				"ross": "UROSS",
+				"tim":  "UTIM",
+			},
+			MultiagentOrder: []string{"ross", "tim"},
+		},
+	}
+
+	ok := b.dispatchGeneralAutoReaction(context.Background(), "CGENERAL", "plain message", &slackevents.MessageEvent{
+		User:            "UGRANT",
+		TimeStamp:       "1770000000.000001",
+		ThreadTimeStamp: "1769999999.000001",
+	})
+	if ok {
+		t.Fatal("expected general auto reaction to skip thread messages")
 	}
 }
 

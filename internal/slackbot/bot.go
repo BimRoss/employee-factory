@@ -560,6 +560,11 @@ func (b *Bot) dispatchGeneralAutoReaction(ctx context.Context, channel, rawText 
 		log.Printf("general_auto_reaction: skip reason=missing_event_or_config employee=%s", emp)
 		return false
 	}
+	if strings.TrimSpace(ev.ThreadTimeStamp) != "" {
+		log.Printf("general_auto_reaction: skip reason=in_thread employee=%s channel=%s thread_ts=%s",
+			strings.TrimSpace(b.cfg.EmployeeID), strings.TrimSpace(channel), strings.TrimSpace(ev.ThreadTimeStamp))
+		return false
+	}
 	mentions := mentionedSquadKeys(rawText, b.cfg)
 	if len(mentions) > 0 {
 		log.Printf("general_auto_reaction: skip reason=explicit_squad_mention employee=%s mentions=%s", strings.TrimSpace(b.cfg.EmployeeID), strings.Join(mentions, ","))
