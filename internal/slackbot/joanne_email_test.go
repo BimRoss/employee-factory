@@ -212,3 +212,12 @@ func TestJoannePendingEmailExpires(t *testing.T) {
 		t.Fatalf("expected expired pending email to be removed")
 	}
 }
+
+func TestNormalizeJoannePlainText(t *testing.T) {
+	raw := "```Hello team,\r\n\r\nThis is a draft.\r\n\r\n\r\nThanks,\r\nJoanne```"
+	got := normalizeJoannePlainText(raw)
+	want := "Hello team,\n\nThis is a draft.\n\nThanks,\nJoanne"
+	if got != want {
+		t.Fatalf("normalized body mismatch:\nwant=%q\ngot =%q", want, got)
+	}
+}

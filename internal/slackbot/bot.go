@@ -81,6 +81,8 @@ type Bot struct {
 	runtimeLessons       *lessons.Manager
 	joanneEmailPendingMu sync.Mutex
 	joanneEmailPending   map[string]joannePendingEmail
+	advancedTaskMu       sync.Mutex
+	advancedTaskByKey    map[string]advancedTaskSession
 }
 
 // New constructs a Socket Mode bot. owner may be nil (human-root owner is inferred from thread history).
@@ -137,6 +139,7 @@ func New(cfg *config.Config, lm *llm.EmployeeLLM, p *persona.Loader, owner threa
 		googleDocsClient:         docsClient,
 		opsProxyClient:           opsClient,
 		joanneEmailPending:       map[string]joannePendingEmail{},
+		advancedTaskByKey:        map[string]advancedTaskSession{},
 		runtimeLessons: lessons.New(lessons.Config{
 			Enabled:        cfg.LessonsEnabled,
 			LogOnly:        cfg.LessonsLogOnly,
@@ -262,19 +265,20 @@ func (b *Bot) onMessage(ctx context.Context, ev *slackevents.MessageEvent) {
 	}) {
 		return
 	}
-	if b.tryHandleRossOps(ctx, channel, rawText, ev.User, ev.TimeStamp, "") {
+	threadTS := strings.TrimSpace(ev.ThreadTimeStamp)
+	if b.tryHandleRossOps(ctx, channel, rawText, ev.User, ev.TimeStamp, threadTS) {
 		return
 	}
-	if b.tryHandleJoanneSendEmail(ctx, channel, rawText, ev.User, ev.TimeStamp, "") {
+	if b.tryHandleJoanneSendEmail(ctx, channel, rawText, ev.User, ev.TimeStamp, threadTS) {
 		return
 	}
-	if b.tryHandleJoanneCreateDoc(ctx, channel, rawText, ev.User, ev.TimeStamp, "") {
+	if b.tryHandleJoanneCreateDoc(ctx, channel, rawText, ev.User, ev.TimeStamp, threadTS) {
 		return
 	}
-	if ts := strings.TrimSpace(ev.ThreadTimeStamp); ts != "" {
+	if threadTS != "" {
 		if b.cfg.ThreadsEnabled() {
-			log.Printf("slack_route: path=thread employee=%s channel=%s thread_ts=%s", strings.TrimSpace(b.cfg.EmployeeID), channel, ts)
-			b.handleThreadMessage(ctx, channel, ev.User, rawText, ev.TimeStamp, ts)
+			log.Printf("slack_route: path=thread employee=%s channel=%s thread_ts=%s", strings.TrimSpace(b.cfg.EmployeeID), channel, threadTS)
+			b.handleThreadMessage(ctx, channel, ev.User, rawText, ev.TimeStamp, threadTS)
 		}
 		return
 	}

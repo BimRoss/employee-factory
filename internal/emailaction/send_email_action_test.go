@@ -96,6 +96,35 @@ func TestParseSendEmailAction_NewlineThreadStyle(t *testing.T) {
 	}
 }
 
+func TestParseSendEmailAction_MultilineBodyPreserved(t *testing.T) {
+	raw := "send email\nto: grant@bimross.com\nsubject: Weekly update\nbody: Line one.\nLine two.\nLine three."
+	got, matched, err := ParseSendEmailAction(raw)
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if !matched {
+		t.Fatalf("expected match")
+	}
+	want := "Line one.\nLine two.\nLine three."
+	if got.BodyText != want {
+		t.Fatalf("body mismatch:\nwant=%q\ngot =%q", want, got.BodyText)
+	}
+}
+
+func TestParseSendEmailAction_SubjectAllowsComma(t *testing.T) {
+	raw := "send email; to: grant@bimross.com; subject: Reminder, project timeline; body: Thanks."
+	got, matched, err := ParseSendEmailAction(raw)
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if !matched {
+		t.Fatalf("expected match")
+	}
+	if got.Subject != "Reminder, project timeline" {
+		t.Fatalf("subject mismatch: %q", got.Subject)
+	}
+}
+
 func TestParseSendEmailAction_PleaseEmailWithExplicitRecipient(t *testing.T) {
 	raw := "please email grant@bimross.com, title: Reminder, body: You got this."
 	got, matched, err := ParseSendEmailAction(raw)

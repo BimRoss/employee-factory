@@ -51,6 +51,27 @@ When a plain (no-bot-mention, no channel-wide summon) message is posted in `#gen
 - Router policy is checked at Slack ingress and again pre-LLM in channel/thread/multi-agent paths so edge event shapes do not bypass safety.
 - Enforced behavior posts one concise acknowledgment and suppresses additional asks/mentions for that message path.
 
+## Thread-first advanced tooling
+
+Complex tooling flows (currently Ross ops + Joanne email/docs) support a thread-bound control contract:
+
+- First top-level complex ask can seed a dedicated task thread.
+- Follow-up control messages are expected in that same thread.
+- Off-thread follow-ups can be redirected back to the active task thread.
+- Session scope is isolated by requester + task type + channel, with TTL expiration.
+
+Flags:
+
+- `ADVANCED_TOOLING_THREAD_ENFORCEMENT=off|log_only|enforce`
+- `ADVANCED_TOOLING_SEED_THREAD_ON_TOPLEVEL=true|false`
+- `ADVANCED_TOOLING_THREAD_TASK_TTL_SEC=<seconds>`
+
+Recommended rollout:
+
+1. Start with `ADVANCED_TOOLING_THREAD_ENFORCEMENT=log_only`.
+2. Review `advanced_task_router` logs for false positives/friction.
+3. Switch to `enforce` after verification.
+
 ## Runtime intelligence lessons (v1)
 
 `employee-factory` now supports a runtime-first, text-based lesson layer that can learn subtle behavior cues over time without a git commit loop.
@@ -160,6 +181,7 @@ The secret sync script writes both `ROSS_OPS_PROXY_TOKEN` and `OPS_PROXY_AUTH_TO
 ### Runtime behavior
 
 - Slack ingress is classified with structured extraction + parser fallback.
+- When `ADVANCED_TOOLING_THREAD_ENFORCEMENT=enforce`, top-level complex asks seed task threads and control continues only in-thread.
 - Matched requests call one of:
   - `POST /k8s/status`
   - `POST /k8s/logs`
@@ -197,6 +219,7 @@ Do not use password-based auth for this path.
 ### Command contract (first pass)
 
 - Trigger intent: message includes "send email" / "send an email" / "draft email".
+- With thread enforcement enabled, start from top-level once, then continue all details/confirmations inside the seeded task thread.
 - Joanne asks in natural language for any missing required info before sending.
 - Required details before send:
   - recipient (who should receive the email)
@@ -248,6 +271,7 @@ These are loaded from the `employee-factory-joanne-runtime` Secret.
 ### Command contract (first pass)
 
 - Trigger intent: explicit asks like "create google doc", "draft google doc", or "create doc".
+- With thread enforcement enabled, start from top-level once, then continue drafting details in the seeded task thread.
 - Optional explicit fields:
   - `title: ...`
   - `instruction: ...` (Joanne drafts body in her voice)

@@ -156,6 +156,13 @@ func (b *Bot) tryHandleRossOps(ctx context.Context, channel, rawText, requestUse
 		log.Printf("ross_ops: log_only=true message_ts=%s source=%s operation=%s", strings.TrimSpace(messageTS), source, action.Operation)
 		return false
 	}
+	decision := b.decideAdvancedTaskRouting(ctx, channel, requestUserID, messageTS, threadTS, advancedTaskRossOps)
+	if decision.ConsumeEvent || !decision.AllowExecution {
+		return true
+	}
+	if strings.TrimSpace(decision.ExecutionTS) != "" {
+		threadTS = strings.TrimSpace(decision.ExecutionTS)
+	}
 	go b.handleRossOpsSafely(ctx, channel, requestUserID, threadTS, messageTS, action)
 	return true
 }

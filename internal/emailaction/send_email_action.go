@@ -9,9 +9,8 @@ import (
 const IntentSendEmail = "send_email"
 
 var (
-	reEmail = regexp.MustCompile(`(?i)\b[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}\b`)
-	reTitle = regexp.MustCompile(`(?i)\b(?:subject|title)\s*:\s*([^;\n,]+)`)
-	reBody  = regexp.MustCompile(`(?i)\b(?:body)\s*:\s*([^;\n]+)`)
+	reEmail       = regexp.MustCompile(`(?i)\b[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}\b`)
+	reFieldMarker = regexp.MustCompile(`(?is)\b(to|subject|title|body|instruction|body_instruction)\s*:\s*`)
 )
 
 // SendEmailAction is the first typed action contract for Joanne email tooling.
@@ -37,26 +36,24 @@ func ParseSendEmailAction(raw string) (SendEmailAction, bool, error) {
 	}
 
 	action := SendEmailAction{Intent: IntentSendEmail}
-	segments := splitCommandSegments(text)
-	remaining := make([]string, 0, len(segments))
-	for _, seg := range segments {
-		key, val, ok := parseKeyValueSegment(seg)
-		if !ok {
-			remaining = append(remaining, seg)
-			continue
-		}
-		switch key {
-		case "to":
-			action.To = strings.TrimSpace(val)
-		case "subject", "title":
-			action.Subject = strings.TrimSpace(val)
-		case "body":
-			action.BodyText = strings.TrimSpace(val)
-		case "body_instruction", "instruction":
-			action.BodyInstruction = strings.TrimSpace(val)
-		default:
-			remaining = append(remaining, seg)
-		}
+	fields, residual := parseLabeledFields(text)
+	if v := strings.TrimSpace(fields["to"]); v != "" {
+		action.To = v
+	}
+	if v := strings.TrimSpace(fields["subject"]); v != "" {
+		action.Subject = v
+	}
+	if v := strings.TrimSpace(fields["title"]); v != "" {
+		action.Subject = v
+	}
+	if v := strings.TrimSpace(fields["body"]); v != "" {
+		action.BodyText = v
+	}
+	if v := strings.TrimSpace(fields["instruction"]); v != "" {
+		action.BodyInstruction = v
+	}
+	if v := strings.TrimSpace(fields["body_instruction"]); v != "" {
+		action.BodyInstruction = v
 	}
 
 	if action.To == "" {
@@ -64,18 +61,8 @@ func ParseSendEmailAction(raw string) (SendEmailAction, bool, error) {
 			action.To = strings.TrimSpace(m)
 		}
 	}
-	if action.Subject == "" {
-		if m := reTitle.FindStringSubmatch(text); len(m) > 1 {
-			action.Subject = strings.TrimSpace(strings.Trim(m[1], `"'`))
-		}
-	}
-	if action.BodyText == "" {
-		if m := reBody.FindStringSubmatch(text); len(m) > 1 {
-			action.BodyText = strings.TrimSpace(strings.Trim(m[1], `"'`))
-		}
-	}
 
-	rem := normalizeResidual(strings.Join(remaining, " "))
+	rem := normalizeResidual(residual)
 	if action.BodyText == "" && action.BodyInstruction == "" && rem != "" {
 		action.BodyInstruction = rem
 	}
@@ -108,39 +95,69 @@ func looksLikeSendEmailIntent(lower string) bool {
 	}
 }
 
-func splitCommandSegments(s string) []string {
-	parts := strings.FieldsFunc(s, func(r rune) bool {
-		return r == '\n' || r == ';'
-	})
-	out := make([]string, 0, len(parts))
-	for _, p := range parts {
-		p = strings.TrimSpace(p)
-		if p != "" {
-			out = append(out, p)
+func parseLabeledFields(s string) (map[string]string, string) {
+	matches := reFieldMarker.FindAllStringSubmatchIndex(s, -1)
+	if len(matches) == 0 {
+		return map[string]string{}, s
+	}
+	fields := map[string]string{}
+	consumed := make([][2]int, 0, len(matches))
+	for i, m := range matches {
+		if len(m) < 4 {
+			continue
 		}
+		key := strings.ToLower(strings.TrimSpace(s[m[2]:m[3]]))
+		valueStart := m[1]
+		valueEnd := len(s)
+		if i+1 < len(matches) {
+			valueEnd = matches[i+1][0]
+		}
+		value := cleanFieldValue(s[valueStart:valueEnd])
+		if value != "" {
+			fields[key] = value
+		}
+		consumed = append(consumed, [2]int{m[0], valueEnd})
 	}
-	if len(out) == 0 {
-		return []string{s}
-	}
-	return out
+	residual := removeRanges(s, consumed)
+	return fields, residual
 }
 
-func parseKeyValueSegment(seg string) (key, val string, ok bool) {
-	i := strings.Index(seg, ":")
-	if i <= 0 {
-		return "", "", false
+func cleanFieldValue(raw string) string {
+	value := strings.TrimSpace(raw)
+	value = strings.Trim(value, " \t\r\n;,")
+	value = strings.Trim(value, `"'`)
+	return strings.TrimSpace(value)
+}
+
+func removeRanges(s string, ranges [][2]int) string {
+	if len(ranges) == 0 {
+		return s
 	}
-	k := strings.ToLower(strings.TrimSpace(seg[:i]))
-	v := strings.TrimSpace(seg[i+1:])
-	if k == "" || v == "" {
-		return "", "", false
+	var builder strings.Builder
+	last := 0
+	for _, rg := range ranges {
+		start, end := rg[0], rg[1]
+		if start < last {
+			start = last
+		}
+		if start > len(s) {
+			start = len(s)
+		}
+		if end > len(s) {
+			end = len(s)
+		}
+		if start > last {
+			builder.WriteString(s[last:start])
+		}
+		if builder.Len() > 0 {
+			builder.WriteString(" ")
+		}
+		last = end
 	}
-	switch k {
-	case "to", "subject", "title", "body", "instruction", "body_instruction":
-		return k, strings.Trim(v, `"'`), true
-	default:
-		return "", "", false
+	if last < len(s) {
+		builder.WriteString(s[last:])
 	}
+	return builder.String()
 }
 
 func normalizeResidual(s string) string {
@@ -150,8 +167,8 @@ func normalizeResidual(s string) string {
 	}
 	intentRe := regexp.MustCompile(`(?i)\b(send an email|send email|draft email)\b`)
 	s = strings.TrimSpace(intentRe.ReplaceAllString(s, ""))
-	fieldRe := regexp.MustCompile(`(?i)\b(to|subject|body|instruction|body_instruction)\s*:\s*[^;\n]+`)
-	s = strings.TrimSpace(fieldRe.ReplaceAllString(s, ""))
+	s = strings.ReplaceAll(s, "\n", " ")
 	s = strings.TrimSpace(strings.Trim(s, "-:"))
+	s = strings.Join(strings.Fields(s), " ")
 	return s
 }

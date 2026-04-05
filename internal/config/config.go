@@ -124,6 +124,12 @@ type Config struct {
 	RouterAvailabilityEnabled bool
 	// RouterLogOnly keeps router classification + decision traces enabled but does not enforce suppression.
 	RouterLogOnly bool
+	// AdvancedToolingThreadEnforcement controls complex tooling thread policy: off | log_only | enforce.
+	AdvancedToolingThreadEnforcement string
+	// AdvancedToolingSeedThreadOnTopLevel starts a control thread when advanced tooling is requested at top-level.
+	AdvancedToolingSeedThreadOnTopLevel bool
+	// AdvancedToolingThreadTaskTTLSec is the active-thread session TTL for a requester+task key.
+	AdvancedToolingThreadTaskTTLSec int
 	// Runtime lessons capture + guarded auto-apply.
 	LessonsEnabled        bool
 	LessonsLogOnly        bool
@@ -226,6 +232,9 @@ func Load() (*Config, error) {
 		LLMContextWeightWindow:               parseIntEnvMin("LLM_CONTEXT_WEIGHT_WINDOW", 3, 1),
 		RouterAvailabilityEnabled:            parseBoolEnv("ROUTER_AVAILABILITY_ENABLED", false),
 		RouterLogOnly:                        parseBoolEnv("ROUTER_LOG_ONLY", false),
+		AdvancedToolingThreadEnforcement:     normalizeAdvancedToolingThreadMode(strings.TrimSpace(os.Getenv("ADVANCED_TOOLING_THREAD_ENFORCEMENT"))),
+		AdvancedToolingSeedThreadOnTopLevel:  parseBoolEnv("ADVANCED_TOOLING_SEED_THREAD_ON_TOPLEVEL", true),
+		AdvancedToolingThreadTaskTTLSec:      parseIntEnvMin("ADVANCED_TOOLING_THREAD_TASK_TTL_SEC", 1200, 60),
 		LessonsEnabled:                       parseBoolEnv("LESSONS_ENABLED", false),
 		LessonsLogOnly:                       parseBoolEnv("LESSONS_LOG_ONLY", true),
 		LessonsAutoApply:                     parseBoolEnv("LESSONS_AUTO_APPLY", true),
@@ -607,6 +616,17 @@ func normalizePresentationJSONModeEnv(raw string) string {
 		return "auto"
 	case "force_for_structured":
 		return "force_for_structured"
+	default:
+		return "off"
+	}
+}
+
+func normalizeAdvancedToolingThreadMode(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "log_only":
+		return "log_only"
+	case "enforce":
+		return "enforce"
 	default:
 		return "off"
 	}

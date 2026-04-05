@@ -89,6 +89,13 @@ func (b *Bot) tryHandleJoanneCreateDoc(ctx context.Context, channel, rawText, re
 		extractErr != nil,
 		strings.TrimSpace(extract.Reason),
 	)
+	decision := b.decideAdvancedTaskRouting(ctx, channel, requestUserID, messageTS, threadTS, advancedTaskJoanneDocs)
+	if decision.ConsumeEvent || !decision.AllowExecution {
+		return true
+	}
+	if strings.TrimSpace(decision.ExecutionTS) != "" {
+		threadTS = strings.TrimSpace(decision.ExecutionTS)
+	}
 	go b.handleJoanneCreateDocSafely(ctx, channel, requestUserID, messageTS, threadTS, action, parseErr, source)
 	return true
 }
@@ -165,7 +172,7 @@ func (b *Bot) handleJoanneCreateDoc(parent context.Context, channel, requestUser
 	if title == "" {
 		title = "Joanne Draft " + time.Now().UTC().Format("2006-01-02")
 	}
-	body := strings.TrimSpace(action.BodyText)
+	body := normalizeJoannePlainText(action.BodyText)
 	var err error
 	if body == "" {
 		body, err = b.generateJoanneDocBody(commandCtx, action.BodyInstruction, title)
@@ -174,6 +181,11 @@ func (b *Bot) handleJoanneCreateDoc(parent context.Context, channel, requestUser
 			b.postJoanneEmailStatus(commandCtx, channel, threadTS, "I hit a drafting error while composing that doc. Please retry with `body:` text.")
 			return
 		}
+	}
+	body = normalizeJoannePlainText(body)
+	if body == "" {
+		b.postJoanneEmailStatus(commandCtx, channel, threadTS, "I still need document body content. Please provide `instruction:` or `body:`.")
+		return
 	}
 
 	result, err := b.googleDocsClient.Create(commandCtx, googledocs.CreateInput{
@@ -217,5 +229,5 @@ func (b *Bot) generateJoanneDocBody(ctx context.Context, instruction, title stri
 	if reply == "" {
 		return "", fmt.Errorf("empty generated doc body")
 	}
-	return reply, nil
+	return normalizeJoannePlainText(reply), nil
 }

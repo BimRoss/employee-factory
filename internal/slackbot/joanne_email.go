@@ -96,6 +96,15 @@ func (b *Bot) tryHandleJoanneSendEmail(ctx context.Context, channel, rawText, re
 	if b.botUserID != "" {
 		cmdText = strings.TrimSpace(strings.ReplaceAll(cmdText, "<@"+b.botUserID+">", ""))
 	}
+	if isJoanneEmailConfirmText(cmdText) || isJoanneEmailCancelText(cmdText) {
+		decision := b.decideAdvancedTaskRouting(ctx, channel, requestUserID, messageTS, threadTS, advancedTaskJoanneEmail)
+		if decision.ConsumeEvent || !decision.AllowExecution {
+			return true
+		}
+		if strings.TrimSpace(decision.ExecutionTS) != "" {
+			threadTS = strings.TrimSpace(decision.ExecutionTS)
+		}
+	}
 	if b.tryHandleJoanneEmailConfirmation(ctx, channel, requestUserID, cmdText, threadTS, messageTS) {
 		return true
 	}
@@ -114,6 +123,13 @@ func (b *Bot) tryHandleJoanneSendEmail(ctx context.Context, channel, rawText, re
 		extractErr != nil,
 		strings.TrimSpace(extract.Reason),
 	)
+	decision := b.decideAdvancedTaskRouting(ctx, channel, requestUserID, messageTS, threadTS, advancedTaskJoanneEmail)
+	if decision.ConsumeEvent || !decision.AllowExecution {
+		return true
+	}
+	if strings.TrimSpace(decision.ExecutionTS) != "" {
+		threadTS = strings.TrimSpace(decision.ExecutionTS)
+	}
 	go b.handleJoanneSendEmailSafely(ctx, channel, requestUserID, messageTS, threadTS, action, parseErr, source)
 	return true
 }
@@ -183,7 +199,11 @@ func (b *Bot) handleJoanneSendEmail(parent context.Context, channel, requestUser
 		return
 	}
 	missingRecipient := strings.TrimSpace(action.To) == ""
-	missingGoal := parseErr != nil || (strings.TrimSpace(action.BodyText) == "" && strings.TrimSpace(action.BodyInstruction) == "")
+	hasBodyContent := strings.TrimSpace(action.BodyText) != "" || strings.TrimSpace(action.BodyInstruction) != ""
+	missingGoal := !hasBodyContent
+	if parseErr != nil && !hasBodyContent {
+		log.Printf("joanne_email: parse_err message_ts=%s source=%s err=%v", strings.TrimSpace(messageTS), strings.TrimSpace(actionSource), parseErr)
+	}
 	if missingRecipient || missingGoal {
 		b.postJoanneEmailStatus(commandCtx, channel, threadTS, b.buildJoanneEmailMissingInfoPrompt(missingRecipient, missingGoal))
 		return
@@ -200,7 +220,7 @@ func (b *Bot) handleJoanneSendEmail(parent context.Context, channel, requestUser
 		subject = "Note from Joanne"
 	}
 
-	body := strings.TrimSpace(action.BodyText)
+	body := normalizeJoannePlainText(action.BodyText)
 	if body == "" {
 		body, err = b.generateJoanneEmailBody(commandCtx, action.BodyInstruction, to)
 		if err != nil {
@@ -208,6 +228,11 @@ func (b *Bot) handleJoanneSendEmail(parent context.Context, channel, requestUser
 			b.postJoanneEmailStatus(commandCtx, channel, threadTS, "I hit a drafting error while composing that email. Please retry with `body:` text.")
 			return
 		}
+	}
+	body = normalizeJoannePlainText(body)
+	if body == "" {
+		b.postJoanneEmailStatus(commandCtx, channel, threadTS, "I still need the email body content. Please provide it with `body:` or `instruction:`.")
+		return
 	}
 
 	goal := deriveJoanneEmailGoal(action, body)
@@ -350,7 +375,7 @@ func (b *Bot) generateJoanneEmailBody(ctx context.Context, instruction, recipien
 	if reply == "" {
 		return "", fmt.Errorf("empty generated body")
 	}
-	return reply, nil
+	return normalizeJoannePlainText(reply), nil
 }
 
 func (b *Bot) postJoanneEmailStatus(ctx context.Context, channel, threadTS, text string) {
@@ -401,6 +426,33 @@ func buildJoanneEmailConfirmationPrompt(to, subject, goal string) string {
 		strings.TrimSpace(goal),
 		strings.TrimSpace(subject),
 	)
+}
+
+func normalizeJoannePlainText(raw string) string {
+	s := strings.TrimSpace(raw)
+	if s == "" {
+		return ""
+	}
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	s = strings.ReplaceAll(s, "\r", "\n")
+	s = strings.ReplaceAll(s, "```", "")
+	lines := strings.Split(s, "\n")
+	cleaned := make([]string, 0, len(lines))
+	blankStreak := 0
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			blankStreak++
+			if blankStreak > 1 {
+				continue
+			}
+			cleaned = append(cleaned, "")
+			continue
+		}
+		blankStreak = 0
+		cleaned = append(cleaned, line)
+	}
+	return strings.TrimSpace(strings.Join(cleaned, "\n"))
 }
 
 func deriveJoanneEmailGoal(action emailaction.SendEmailAction, body string) string {
