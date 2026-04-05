@@ -213,6 +213,8 @@ func (b *Bot) handleEvent(ctx context.Context, evt socketmode.Event) {
 				b.onMessage(ctx, ev)
 			case *slackevents.AppMentionEvent:
 				b.onAppMention(ctx, ev)
+			case *slackevents.ReactionAddedEvent:
+				b.onReactionAdded(ctx, ev)
 			default:
 				log.Printf("slack: unhandled Events API inner type %T", eventsAPI.InnerEvent.Data)
 			}
@@ -328,6 +330,46 @@ func (b *Bot) onMessage(ctx context.Context, ev *slackevents.MessageEvent) {
 		log.Printf("slack_route: path=general_auto_reaction employee=%s channel=%s anchor=%s", strings.TrimSpace(b.cfg.EmployeeID), channel, strings.TrimSpace(ev.TimeStamp))
 		return
 	}
+}
+
+func (b *Bot) onReactionAdded(ctx context.Context, ev *slackevents.ReactionAddedEvent) {
+	if !shouldMirrorThumbsUpReaction(b.cfg, b.botUserID, ev) {
+		return
+	}
+	channel := strings.TrimSpace(ev.Item.Channel)
+	messageTS := strings.TrimSpace(ev.Item.Timestamp)
+	if b.postReactionWithResult(ctx, channel, messageTS, "+1") {
+		log.Printf("slack_route: path=reaction_mirror employee=%s channel=%s anchor=%s reactor=%s", strings.TrimSpace(b.cfg.EmployeeID), channel, messageTS, strings.TrimSpace(ev.User))
+	}
+}
+
+func shouldMirrorThumbsUpReaction(cfg *config.Config, botUserID string, ev *slackevents.ReactionAddedEvent) bool {
+	if cfg == nil || ev == nil {
+		return false
+	}
+	if strings.TrimSpace(cfg.ChatAllowedUserID) == "" {
+		return false
+	}
+	if strings.TrimSpace(ev.Reaction) != "+1" {
+		return false
+	}
+	if strings.TrimSpace(ev.User) != strings.TrimSpace(cfg.ChatAllowedUserID) {
+		return false
+	}
+	if strings.TrimSpace(ev.Item.Type) != "message" {
+		return false
+	}
+	channel := strings.TrimSpace(ev.Item.Channel)
+	if channel == "" || strings.HasPrefix(channel, "D") {
+		return false
+	}
+	if !cfg.ChannelAllowed(channel) {
+		return false
+	}
+	if strings.TrimSpace(ev.Item.Timestamp) == "" {
+		return false
+	}
+	return strings.TrimSpace(ev.ItemUser) != "" && strings.TrimSpace(ev.ItemUser) == strings.TrimSpace(botUserID)
 }
 
 func shouldRouteAsBroadcast(rawText string, cfg *config.Config) bool {
@@ -725,6 +767,10 @@ func (b *Bot) releaseGeneralAutoReplyClaim(ctx context.Context, channel, anchorT
 }
 
 func (b *Bot) postGeneralAutoReactionWithResult(ctx context.Context, channel, messageTS string) bool {
+	return b.postReactionWithResult(ctx, channel, messageTS, "+1")
+}
+
+func (b *Bot) postReactionWithResult(ctx context.Context, channel, messageTS, reaction string) bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
@@ -742,7 +788,10 @@ func (b *Bot) postGeneralAutoReactionWithResult(ctx context.Context, channel, me
 		Channel:   strings.TrimSpace(channel),
 		Timestamp: strings.TrimSpace(messageTS),
 	}
-	if err := b.api.AddReactionContext(ctx, "+1", ref); err != nil {
+	if err := b.api.AddReactionContext(ctx, strings.TrimSpace(reaction), ref); err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "already_reacted") {
+			return true
+		}
 		log.Printf("slack add reaction: %v", err)
 		return false
 	}
